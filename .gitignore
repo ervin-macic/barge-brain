@@ -1,0 +1,5 @@
+.env
+.venv
+.RData
+barge-brain.Rproj
+.Rproj.user
