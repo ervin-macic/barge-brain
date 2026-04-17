@@ -10,55 +10,86 @@ import SummaryBar from "../components/SummaryBar";
 const ROW_H = 52;
 const MS_PER_DAY = 86400000;
 const NODE_RADIUS = 9;
+const PROJECTION_DAYS = 7;
 
 const PORT_GRAPH = {
   ROTTE: { x: 10, y: 50, name: "Rott" },
-  TIEL: { x: 50, y: 12, name: "Tiel" },
+  TIEL: { x: 50, y: 50, name: "Tiel" },
   VEGHE: { x: 50, y: 88, name: "Veg" },
-  OSS: { x: 50, y: 50, name: "Oss" },
+  OSS: { x: 50, y: 12, name: "Oss" },
   KAT: { x: 90, y: 50, name: "Kat" },
 };
 
-function getWeekStart(d) {
-  const date = new Date(d);
-  const day = date.getDay();
-  const diff = date.getDate() - day + (day === 0 ? -6 : 1); // Monday = 1
-  return new Date(date.getFullYear(), date.getMonth(), diff);
+function startOfLocalDay(date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
 }
 
-function getWeekRange(weekOffset) {
-  const base = getWeekStart(TODAY);
-  const start = new Date(base.getTime() + weekOffset * 7 * MS_PER_DAY);
-  const end = new Date(start.getTime() + 6 * MS_PER_DAY + MS_PER_DAY - 1);
+function endOfLocalDay(date) {
+  const d = new Date(date);
+  d.setHours(23, 59, 59, 999);
+  return d;
+}
+
+function addLocalDays(date, amount) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + amount);
+  return d;
+}
+
+function isSameLocalDay(a, b) {
+  return startOfLocalDay(a).getTime() === startOfLocalDay(b).getTime();
+}
+
+function getProjectionRange() {
+  const start = startOfLocalDay(addLocalDays(TODAY, -1));
+  const end = endOfLocalDay(addLocalDays(TODAY, 5));
   return { start, end };
 }
 
-function tPctInWeek(dt, weekStart, weekEnd) {
+function tPctInProjection(dt, projectionStart, projectionEnd) {
   if (!dt) return null;
   const d = new Date(dt);
-  const total = weekEnd - weekStart;
-  const pos = d - weekStart;
+  const total = projectionEnd - projectionStart;
+  const pos = d - projectionStart;
   return Math.max(0, Math.min(100, (pos / total) * 100));
 }
 
-function buildWeekDayMarkers(weekStart) {
+function buildProjectionDayMarkers(projectionStart) {
   const days = [];
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(weekStart.getTime() + i * MS_PER_DAY);
+  for (let i = 0; i < PROJECTION_DAYS; i += 1) {
+    const d = addLocalDays(projectionStart, i);
     days.push({
-      pct: (i / 7) * 100,
+      pct: (i / PROJECTION_DAYS) * 100,
       label: d.toLocaleDateString("nl-NL", { weekday: "short", day: "numeric" }),
       day: d.getDay(),
       date: d,
+      isToday: isSameLocalDay(d, TODAY),
     });
   }
   return days;
 }
 
+function getLegKey(leg) {
+  return (
+    leg?.code ||
+    leg?.id ||
+    leg?.legId ||
+    `${leg?.barge || ""}__${leg?.depart || ""}__${leg?.portFrom || ""}__${
+      leg?.portTo || ""
+    }`
+  );
+}
+
+function getDisplayStatus(leg) {
+  return leg?.statusOverride || statusLevel(leg);
+}
+
 function filterLegs(legs, filters) {
   let result = legs;
   if (filters.status !== "all") {
-    result = result.filter((l) => statusLevel(l) === filters.status);
+    result = result.filter((l) => getDisplayStatus(l) === filters.status);
   }
   if (filters.terminal !== "all") {
     result = result.filter(
@@ -78,9 +109,10 @@ function getUtilizationColor(pct) {
 }
 
 function getLegLineColor(leg) {
-  const lvl = statusLevel(leg);
+  const lvl = getDisplayStatus(leg);
   if (lvl === "critical") return theme.error;
   if (lvl === "warning" || lvl === "high") return theme.warning;
+  if (lvl === "pending fix") return theme.pendingFixColour;
   return theme.success;
 }
 
@@ -101,9 +133,9 @@ function buildBargeRotation(bLegs) {
       : null;
 
   const bargeStatus =
-    statusLevel(sorted[sorted.length - 1]) === "critical"
+    getDisplayStatus(sorted[sorted.length - 1]) === "critical"
       ? "Late"
-      : sorted.some((l) => statusLevel(l) !== "ok")
+      : sorted.some((l) => getDisplayStatus(l) !== "ok")
       ? "At risk"
       : "On time";
 
@@ -113,6 +145,28 @@ function buildBargeRotation(bLegs) {
     bargeStatus,
     totalTeu: sorted.reduce((a, l) => a + (l.teu || 0), 0),
   };
+}
+
+function getTodayJourneyStatus(bLegs) {
+  const todayStart = startOfLocalDay(TODAY).getTime();
+  const todayEnd = endOfLocalDay(TODAY).getTime();
+
+  const todayLegs = bLegs.filter((leg) => {
+    if (!leg.depart || !leg.arrive) return false;
+    const dep = new Date(leg.depart).getTime();
+    const arr = new Date(leg.arrive).getTime();
+    return dep <= todayEnd && arr >= todayStart;
+  });
+
+  if (todayLegs.length === 0) return "on-time";
+  if (todayLegs.some((leg) => getDisplayStatus(leg) === "critical")) return "critical";
+  if (todayLegs.some((leg) => getDisplayStatus(leg) === "warning" || getDisplayStatus(leg) === "high")) {
+    return "warning";
+  }
+  if (todayLegs.some((leg) => getDisplayStatus(leg) === "pending fix")) {
+    return "pending fix";
+  }
+  return "on-time";
 }
 
 function getCurrentBargePosition(allLegs) {
@@ -365,20 +419,38 @@ export default function WeeklyBargeView({ legs }) {
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
   const hideTimeoutRef = useRef(null);
   const [selectedBarge, setSelectedBarge] = useState(null);
-  const [weekOffset, setWeekOffset] = useState(0);
   const [filters, setFilters] = useState({
     status: "all",
     terminal: "all",
   });
+  const [legStatusOverrides, setLegStatusOverrides] = useState({});
 
-  const { start: weekStart, end: weekEnd } = getWeekRange(weekOffset);
-  const filteredLegs = filterLegs(legs, filters);
+  const legsWithOverrides = legs.map((leg) => {
+    const key = getLegKey(leg);
+    const statusOverride = legStatusOverrides[key];
+    return statusOverride ? { ...leg, statusOverride } : leg;
+  });
+
+  const { start: projectionStart, end: projectionEnd } = getProjectionRange();
+  const filteredLegs = filterLegs(legsWithOverrides, filters);
   const barges = [...new Set(filteredLegs.map((l) => l.barge))].sort();
-  const days = buildWeekDayMarkers(weekStart);
-  const todayPct = tPctInWeek(TODAY.toISOString(), weekStart, weekEnd);
+  const days = buildProjectionDayMarkers(projectionStart);
+  const todayPct = tPctInProjection(
+    startOfLocalDay(TODAY),
+    projectionStart,
+    projectionEnd
+  );
 
   const handleFilterChange = (key, value) => {
     setFilters((f) => ({ ...f, [key]: value }));
+  };
+
+  const handleMarkPendingFix = (leg) => {
+    const key = getLegKey(leg);
+    setLegStatusOverrides((prev) => ({
+      ...prev,
+      [key]: "pending fix",
+    }));
   };
 
   const bargeRows = barges.map((b) => {
@@ -391,11 +463,13 @@ export default function WeeklyBargeView({ legs }) {
         ? withTeu.reduce((a, l) => a + l.teuPct, 0) / withTeu.length
         : null;
     const bargeStatus =
-      statusLevel(bLegs[bLegs.length - 1]) === "critical"
+      getDisplayStatus(bLegs[bLegs.length - 1]) === "critical"
         ? "Late"
-        : bLegs.some((l) => statusLevel(l) !== "ok")
+        : bLegs.some((l) => getDisplayStatus(l) !== "ok")
         ? "At risk"
         : "On time";
+
+    const todayJourneyStatus = getTodayJourneyStatus(bLegs);
 
     const currentLeg = bLegs.find((leg) => {
       const dep = new Date(leg.depart).getTime();
@@ -416,14 +490,15 @@ export default function WeeklyBargeView({ legs }) {
       bLegs,
       utilization,
       bargeStatus,
+      todayJourneyStatus,
       currentLegLabel,
     };
   });
 
-  const weekLabel = `${weekStart.toLocaleDateString("nl-NL", {
+  const projectionLabel = `${projectionStart.toLocaleDateString("nl-NL", {
     day: "numeric",
     month: "short",
-  })} – ${weekEnd.toLocaleDateString("nl-NL", {
+  })} – ${projectionEnd.toLocaleDateString("nl-NL", {
     day: "numeric",
     month: "short",
     year: "numeric",
@@ -467,20 +542,6 @@ export default function WeeklyBargeView({ legs }) {
             }}
           >
             <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-              <button
-                onClick={() => setWeekOffset((o) => o - 1)}
-                style={{
-                  padding: "4px 8px",
-                  border: `1px solid ${theme.border}`,
-                  borderRadius: theme.radius.sm,
-                  background: theme.bgPrimary,
-                  cursor: "pointer",
-                  fontSize: 12,
-                  color: theme.textSecondary,
-                }}
-              >
-                ←
-              </button>
               <span
                 style={{
                   fontSize: 13,
@@ -490,22 +551,8 @@ export default function WeeklyBargeView({ legs }) {
                   textAlign: "center",
                 }}
               >
-                {weekLabel}
+                {projectionLabel}
               </span>
-              <button
-                onClick={() => setWeekOffset((o) => o + 1)}
-                style={{
-                  padding: "4px 8px",
-                  border: `1px solid ${theme.border}`,
-                  borderRadius: theme.radius.sm,
-                  background: theme.bgPrimary,
-                  cursor: "pointer",
-                  fontSize: 12,
-                  color: theme.textSecondary,
-                }}
-              >
-                →
-              </button>
             </div>
             <div
               style={{
@@ -554,13 +601,12 @@ export default function WeeklyBargeView({ legs }) {
                     left: `${d.pct}%`,
                     top: 0,
                     height: "100%",
-                    borderLeft:
-                      d.day === 1
-                        ? `1px solid ${theme.accent}`
-                        : `1px solid ${theme.borderMuted}`,
+                    borderLeft: d.isToday
+                      ? `1px solid ${theme.accent}`
+                      : `1px solid ${theme.borderMuted}`,
                     paddingLeft: 4,
                     fontSize: 10,
-                    color: d.day === 1 ? theme.accent : theme.textSecondary,
+                    color: d.isToday ? theme.accent : theme.textSecondary,
                     display: "flex",
                     alignItems: "center",
                     whiteSpace: "nowrap",
@@ -586,13 +632,25 @@ export default function WeeklyBargeView({ legs }) {
           </div>
 
           {bargeRows.map(
-            ({ barge, info, bLegs, utilization, bargeStatus, currentLegLabel }) => {
+            ({
+              barge,
+              info,
+              bLegs,
+              utilization,
+              bargeStatus,
+              todayJourneyStatus,
+              currentLegLabel,
+            }) => {
               const utilizationColor = getUtilizationColor(utilization);
               const statusColorVal =
-                bargeStatus === "Late"
+                todayJourneyStatus === "critical"
                   ? theme.statusMajorDelay
-                  : bargeStatus === "At risk"
+                  : todayJourneyStatus === "warning"
                   ? theme.statusMinorDelay
+                  : todayJourneyStatus === "pending fix"
+                  ? theme.pendingFixColour
+                  : todayJourneyStatus === "high"
+                  ? theme.accent
                   : theme.statusOnTime;
 
               return (
@@ -661,7 +719,7 @@ export default function WeeklyBargeView({ legs }) {
                   >
                     {days.map(
                       (d, i) =>
-                        d.day === 1 && (
+                        d.isToday && (
                           <div
                             key={i}
                             style={{
@@ -691,19 +749,31 @@ export default function WeeklyBargeView({ legs }) {
                     {bLegs.map((leg, i) => {
                       const dep = new Date(leg.depart).getTime();
                       const arr = new Date(leg.arrive).getTime();
-                      const weekStartMs = weekStart.getTime();
-                      const weekEndMs = weekEnd.getTime();
-                      const startCut = dep < weekStartMs;
-                      const endCut = arr > weekEndMs;
+                      const projectionStartMs = projectionStart.getTime();
+                      const projectionEndMs = projectionEnd.getTime();
+                      const startCut = dep < projectionStartMs;
+                      const endCut = arr > projectionEndMs;
 
-                      const s = tPctInWeek(leg.depart, weekStart, weekEnd);
-                      const e = tPctInWeek(leg.arrive, weekStart, weekEnd);
+                      const s = tPctInProjection(
+                        leg.depart,
+                        projectionStart,
+                        projectionEnd
+                      );
+                      const e = tPctInProjection(
+                        leg.arrive,
+                        projectionStart,
+                        projectionEnd
+                      );
                       if (s === null || e === null) return null;
 
                       const w = Math.max(e - s, 0.5);
                       const color = getLegLineColor(leg);
-                      const startLabel = (PORT_LABELS[leg.portFrom] || leg.portFrom || "").charAt(0);
-                      const endLabel = (PORT_LABELS[leg.portTo] || leg.portTo || "").charAt(0);
+                      const startLabel = (
+                        PORT_LABELS[leg.portFrom] || leg.portFrom || ""
+                      ).charAt(0);
+                      const endLabel = (
+                        PORT_LABELS[leg.portTo] || leg.portTo || ""
+                      ).charAt(0);
 
                       return (
                         <div
@@ -847,7 +917,7 @@ export default function WeeklyBargeView({ legs }) {
                 padding: 40,
               }}
             >
-              No legs match the current filters for this week.
+              No legs match the current filters for this projection.
             </div>
           )}
         </div>
@@ -964,7 +1034,13 @@ export default function WeeklyBargeView({ legs }) {
                     >
                       Legs
                     </div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 12,
+                      }}
+                    >
                       {bLegs.map((leg, idx) => (
                         <div
                           key={idx}
@@ -980,10 +1056,12 @@ export default function WeeklyBargeView({ legs }) {
                               height: 8,
                               borderRadius: 2,
                               background:
-                                statusLevel(leg) === "critical"
+                                getDisplayStatus(leg) === "critical"
                                   ? theme.statusMajorDelay
-                                  : statusLevel(leg) === "warning"
+                                  : getDisplayStatus(leg) === "warning"
                                   ? theme.statusMinorDelay
+                                  : getDisplayStatus(leg) === "pending fix"
+                                  ? theme.pendingFixColour
                                   : theme.statusOnTime,
                               marginTop: 4,
                               flexShrink: 0,
@@ -1023,20 +1101,27 @@ export default function WeeklyBargeView({ legs }) {
           </div>
         )}
 
-        {tooltip && (
-          <Tooltip
-            leg={tooltip}
-            x={mousePos.x}
-            y={mousePos.y}
-            onMouseEnter={() => {
-              if (hideTimeoutRef.current) {
-                clearTimeout(hideTimeoutRef.current);
-                hideTimeoutRef.current = null;
-              }
-            }}
-            onMouseLeave={() => setTooltip(null)}
-          />
-        )}
+        {tooltip && (() => {
+          const activeTooltipLeg =
+            legsWithOverrides.find((leg) => getLegKey(leg) === getLegKey(tooltip)) ||
+            tooltip;
+
+          return (
+            <Tooltip
+              leg={activeTooltipLeg}
+              x={mousePos.x}
+              y={mousePos.y}
+              onMouseEnter={() => {
+                if (hideTimeoutRef.current) {
+                  clearTimeout(hideTimeoutRef.current);
+                  hideTimeoutRef.current = null;
+                }
+              }}
+              onMouseLeave={() => setTooltip(null)}
+              onMarkPendingFix={handleMarkPendingFix}
+            />
+          );
+        })()}
       </div>
     </div>
   );

@@ -9,12 +9,13 @@ import SummaryBar from "../components/SummaryBar";
 
 const ROW_H = 56;
 const NODE_RADIUS = 9;
+const PENDING_FIX_COLOR = theme.pendingFixColour;
 
 const PORT_GRAPH = {
   ROTTE: { x: 10, y: 50, name: "Rott" },
-  TIEL: { x: 50, y: 12, name: "Tiel" },
+  TIEL: { x: 50, y: 50, name: "Tiel" },
   VEGHE: { x: 50, y: 88, name: "Veg" },
-  OSS: { x: 50, y: 50, name: "Oss" },
+  OSS: { x: 50, y: 12, name: "Oss" },
   KAT: { x: 90, y: 50, name: "Kat" },
 };
 
@@ -31,25 +32,69 @@ function getPortShortLabel(portCode) {
     case "KAT":
       return "K";
     default:
-      return portCode ? String(portCode).slice(0, 1).toUpperCase() : "—";
+      return portCode ? String(portCode).slice(0, 1).toUpperCase() : "-";
   }
 }
 
 function getPortDisplayName(portCode) {
-  return PORT_LABELS[portCode] || portCode || "—";
+  return PORT_LABELS[portCode] || portCode || "-";
+}
+
+function getDisplayStatus(leg) {
+  return leg?.statusOverride || statusLevel(leg);
+}
+
+function getStatusColor(status) {
+  switch (status) {
+    case "critical":
+      return theme.statusMajorDelay;
+    case "warning":
+      return theme.statusMinorDelay;
+    case "high":
+      return theme.accent;
+    case "pending fix":
+      return PENDING_FIX_COLOR;
+    default:
+      return theme.statusOnTime;
+  }
+}
+
+function getBargeStatusColor(bargeStatus) {
+  switch (bargeStatus) {
+    case "Late":
+      return theme.statusMajorDelay;
+    case "At risk":
+      return theme.statusMinorDelay;
+    case "Pending fix":
+      return PENDING_FIX_COLOR;
+    default:
+      return theme.statusOnTime;
+  }
+}
+
+function getLegKey(leg) {
+  return [
+    leg?.code,
+    leg?.id,
+    leg?.barge,
+    leg?.portFrom,
+    leg?.portTo,
+    leg?.depart,
+    leg?.arrive,
+  ]
+    .filter(Boolean)
+    .join("|");
 }
 
 function getLegLineColor(leg) {
-  const lvl = statusLevel(leg);
-  if (lvl === "critical") return theme.error;
-  if (lvl === "warning" || lvl === "high") return theme.warning;
-  return theme.success;
+  return getStatusColor(getDisplayStatus(leg));
 }
 
 function getSegmentStatus(leg) {
-  const lvl = statusLevel(leg);
-  if (lvl === "critical") return "late";
-  if (lvl === "warning" || lvl === "high") return "at-risk";
+  const status = getDisplayStatus(leg);
+  if (status === "critical") return "late";
+  if (status === "warning" || status === "high") return "at-risk";
+  if (status === "pending fix") return "pending-fix";
   return "on-time";
 }
 
@@ -60,6 +105,40 @@ function getUtilizationColor(pct) {
   if (pct >= 50) return "#3b82f6";
   if (pct >= 30) return theme.statusMinorDelay;
   return theme.statusMajorDelay;
+}
+
+function startOfLocalDay(date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function endOfLocalDay(date) {
+  const d = new Date(date);
+  d.setHours(23, 59, 59, 999);
+  return d;
+}
+
+function getTodayJourneyStatus(bLegs) {
+  const todayStart = startOfLocalDay(TODAY).getTime();
+  const todayEnd = endOfLocalDay(TODAY).getTime();
+
+  const todayLegs = bLegs.filter((leg) => {
+    if (!leg.depart || !leg.arrive) return false;
+    const dep = new Date(leg.depart).getTime();
+    const arr = new Date(leg.arrive).getTime();
+    return dep <= todayEnd && arr >= todayStart;
+  });
+
+  if (todayLegs.length === 0) return "on-time";
+  if (todayLegs.some((leg) => getDisplayStatus(leg) === "critical")) return "critical";
+  if (todayLegs.some((leg) => getDisplayStatus(leg) === "warning" || getDisplayStatus(leg) === "high")) {
+    return "warning";
+  }
+  if (todayLegs.some((leg) => getDisplayStatus(leg) === "pending fix")) {
+    return "pending fix";
+  }
+  return "on-time";
 }
 
 function buildDayMarkers() {
@@ -81,7 +160,7 @@ function buildDayMarkers() {
 function filterLegs(legs, filters) {
   let result = legs;
   if (filters.status !== "all") {
-    result = result.filter((l) => statusLevel(l) === filters.status);
+    result = result.filter((l) => getDisplayStatus(l) === filters.status);
   }
   if (filters.terminal !== "all") {
     result = result.filter(
@@ -128,13 +207,19 @@ function buildBargeRotation(bLegs) {
       ? withTeu.reduce((a, l) => a + l.teuPct, 0) / withTeu.length
       : null;
 
-  const bargeStatus =
-    statusLevel(sorted[sorted.length - 1]) === "critical"
-      ? "Late"
-      : statusLevel(sorted[0]) !== "ok" ||
-        sorted.some((l) => statusLevel(l) !== "ok")
-      ? "At risk"
-      : "On time";
+  const hasCritical = sorted.some((l) => getDisplayStatus(l) === "critical");
+  const hasWarning = sorted.some(
+    (l) => getDisplayStatus(l) === "warning" || getDisplayStatus(l) === "high"
+  );
+  const hasPendingFix = sorted.some((l) => getDisplayStatus(l) === "pending fix");
+
+  const bargeStatus = hasCritical
+    ? "Late"
+    : hasWarning
+    ? "At risk"
+    : hasPendingFix
+    ? "Pending fix"
+    : "On time";
 
   return {
     legs: sorted,
@@ -400,8 +485,23 @@ export default function BargeView({ legs }) {
     status: "all",
     terminal: "all",
   });
+  const [statusOverrides, setStatusOverrides] = useState({});
 
-  const filteredLegs = filterLegs(legs, filters);
+  const legsWithOverrides = legs.map((leg) => ({
+    ...leg,
+    statusOverride: statusOverrides[getLegKey(leg)],
+  }));
+
+  const handleMarkPendingFix = (legToMark) => {
+    if (!legToMark) return;
+    const key = getLegKey(legToMark);
+    setStatusOverrides((prev) => {
+      if (prev[key] === "pending fix") return prev;
+      return { ...prev, [key]: "pending fix" };
+    });
+  };
+
+  const filteredLegs = filterLegs(legsWithOverrides, filters);
   const barges = [...new Set(filteredLegs.map((l) => l.barge))].sort();
   const todayPct = tPct(TODAY.toISOString());
   const days = buildDayMarkers();
@@ -415,6 +515,7 @@ export default function BargeView({ legs }) {
       (l) => l.barge === b && l.depart && l.arrive
     );
     const rotation = buildBargeRotation(bLegs);
+    const todayJourneyStatus = getTodayJourneyStatus(bLegs);
 
     const currentLeg = bLegs.find((leg) => {
       const dep = new Date(leg.depart).getTime();
@@ -424,7 +525,7 @@ export default function BargeView({ legs }) {
     });
 
     const currentLegLabel = currentLeg
-      ? `${PORT_LABELS[currentLeg.portFrom] || currentLeg.portFrom} → ${
+      ? `${PORT_LABELS[currentLeg.portFrom] || currentLeg.portFrom} -> ${
           PORT_LABELS[currentLeg.portTo] || currentLeg.portTo
         }`
       : "";
@@ -435,12 +536,17 @@ export default function BargeView({ legs }) {
       bLegs,
       rotation,
       currentLegLabel,
+      todayJourneyStatus,
     };
   });
 
+  const activeTooltipLeg = tooltip
+    ? legsWithOverrides.find((leg) => getLegKey(leg) === getLegKey(tooltip)) || tooltip
+    : null;
+
   return (
     <div>
-      <SummaryBar legs={legs} />
+      <SummaryBar legs={legsWithOverrides} />
       <div
         style={{
           display: "flex",
@@ -455,7 +561,7 @@ export default function BargeView({ legs }) {
         <FiltersSidebar
           filters={filters}
           onFilterChange={handleFilterChange}
-          legs={legs}
+          legs={legsWithOverrides}
         />
 
         <div
@@ -531,14 +637,9 @@ export default function BargeView({ legs }) {
             </div>
           </div>
 
-          {bargeRows.map(({ barge, rotation, currentLegLabel }) => {
+          {bargeRows.map(({ barge, rotation, currentLegLabel, todayJourneyStatus }) => {
             const utilizationColor = getUtilizationColor(rotation?.utilization);
-            const statusDotColor =
-              rotation?.bargeStatus === "Late"
-                ? theme.statusMajorDelay
-                : rotation?.bargeStatus === "At risk"
-                ? theme.statusMinorDelay
-                : theme.statusOnTime;
+            const statusDotColor = getStatusColor(todayJourneyStatus);
 
             return (
               <div
@@ -810,7 +911,7 @@ export default function BargeView({ legs }) {
               if (!row?.rotation) return null;
 
               const { rotation } = row;
-              const allLegsForBarge = legs.filter((l) => l.barge === selectedBarge);
+              const allLegsForBarge = legsWithOverrides.filter((l) => l.barge === selectedBarge);
               const position = getCurrentBargePosition(allLegsForBarge);
 
               const positionLabel =
@@ -818,9 +919,10 @@ export default function BargeView({ legs }) {
                   ? "No live position available"
                   : position.type === "port"
                   ? `At ${getPortDisplayName(position.port)}`
-                  : `On leg ${getPortDisplayName(position.from)} → ${getPortDisplayName(
+                  : `On leg ${getPortDisplayName(position.from)} -> ${getPortDisplayName(
                       position.to
                     )} (${Math.round(position.progress * 100)}%)`;
+
 
               return (
                 <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -840,12 +942,7 @@ export default function BargeView({ legs }) {
                             width: 8,
                             height: 8,
                             borderRadius: "50%",
-                            background:
-                              rotation.bargeStatus === "Late"
-                                ? theme.statusMajorDelay
-                                : rotation.bargeStatus === "At risk"
-                                ? theme.statusMinorDelay
-                                : theme.statusOnTime,
+                            background: getBargeStatusColor(rotation.bargeStatus),
                           }}
                         />
                         {rotation.bargeStatus}
@@ -917,12 +1014,7 @@ export default function BargeView({ legs }) {
                               width: 8,
                               height: 8,
                               borderRadius: 2,
-                              background:
-                                statusLevel(leg) === "critical"
-                                  ? theme.statusMajorDelay
-                                  : statusLevel(leg) === "warning"
-                                  ? theme.statusMinorDelay
-                                  : theme.statusOnTime,
+                              background: getStatusColor(getDisplayStatus(leg)),
                               marginTop: 4,
                               flexShrink: 0,
                             }}
@@ -935,7 +1027,7 @@ export default function BargeView({ legs }) {
                                 color: theme.textPrimary,
                               }}
                             >
-                              {PORT_LABELS[leg.portFrom] || leg.portFrom} →{" "}
+                              {PORT_LABELS[leg.portFrom] || leg.portFrom}
                               {PORT_LABELS[leg.portTo] || leg.portTo}
                             </div>
                             <div
@@ -946,11 +1038,11 @@ export default function BargeView({ legs }) {
                             >
                               {leg.depart
                                 ? new Date(leg.depart).toLocaleString("nl-NL")
-                                : "—"}{" "}
-                              –{" "}
+                                : "-"}{" "}
+                              -{" "}
                               {leg.arrive
                                 ? new Date(leg.arrive).toLocaleString("nl-NL")
-                                : "—"}
+                                : "-"}
                             </div>
                           </div>
                         </div>
@@ -963,11 +1055,12 @@ export default function BargeView({ legs }) {
           </div>
         )}
 
-        {tooltip && (
+        {activeTooltipLeg && (
           <Tooltip
-            leg={tooltip}
+            leg={activeTooltipLeg}
             x={mousePos.x}
             y={mousePos.y}
+            onMarkPendingFix={handleMarkPendingFix}
             onMouseEnter={() => {
               if (hideTimeoutRef.current) {
                 clearTimeout(hideTimeoutRef.current);
