@@ -32,6 +32,7 @@ export const theme = {
   destructive: "#D4183D",
   info: "#6366F1",
   infoBg: "#E0E7FF",
+  pendingFixColour: "#00ff0094",
 
   // Issue Status colors (Figma ScatterPlot)
   statusOnTime: "#10B981",
