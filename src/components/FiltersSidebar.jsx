@@ -163,7 +163,7 @@ export default function FiltersSidebar({ filters, onFilterChange, legs }) {
             { color: theme.warning, label: "Warning (No Appt/NOK)" },
             { color: theme.error, label: "Critical (>20 NOK)" },
             { color: theme.accent, label: "≥90% TEU (high load)" },
-            { color: theme.textMuted, label: "Today marker" },
+            { color: theme.pendingFixColour, label: "Pending Fix" },
           ].map((x) => (
             <div key={x.label} style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <div

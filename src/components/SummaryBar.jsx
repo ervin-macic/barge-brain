@@ -5,10 +5,10 @@ export default function SummaryBar({ legs }) {
   const barges = [...new Set(legs.map((l) => l.barge))];
 
   const stats = [
-    { label: "Total Legs", val: legs.filter((l) => l.depart).length, color: theme.accent },
+    { label: "Total Legs", val: legs.filter((l) => l.depart).length, color: theme.info },
     { label: "With Issues", val: legs.filter((l) => statusLevel(l) !== "ok").length, color: theme.warning },
     { label: "No Appointment", val: legs.filter((l) => !l.appt).length, color: theme.warning },
-    { label: "High Load (≥90%)", val: legs.filter((l) => l.teuPct != null && l.teuPct >= 90).length, color: theme.info },
+    { label: "High Load (≥90%)", val: legs.filter((l) => l.teuPct != null && l.teuPct >= 90).length, color: theme.accent },
     { label: "Active Barges", val: barges.filter((b) => legs.some((l) => l.barge === b && l.depart)).length, color: theme.success },
   ];
 
