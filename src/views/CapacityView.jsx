@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { RAW } from "../data/rawData";
+import { RAW } from "../data/activeRaw";
 import { BARGE_COLORS, PORT_LABELS } from "../data/constants";
 import { barColor, barBgColor } from "../utils/legHelpers";
 import { theme } from "../data/theme";

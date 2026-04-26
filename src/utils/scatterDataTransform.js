@@ -37,8 +37,8 @@ function getRotterdamPort(leg) {
 }
 
 /**
- * Transform legs from rawData into scatter plot point format (Figma-like).
- * Each leg becomes one point. Keeps rawData.js unchanged.
+ * Transform legs from RAW into scatter plot point format (Figma-like).
+ * Each leg becomes one point. Data source: src/data/activeRaw.js
  */
 export function legsToScatterPoints(legs) {
   return legs
