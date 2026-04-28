@@ -19,7 +19,7 @@ function loadRaw() {
 }
 
 const elm = XLSX.utils.sheet_to_json(
-  XLSX.readFile(path.join(root, "legacy/data/dfVoyElm.xlsx")).Sheets.Sheet1,
+  XLSX.readFile(path.join(root, "data/dfVoyElm.xlsx")).Sheets.Sheet1,
   { defval: null, raw: true }
 );
 const { legs } = loadRaw();

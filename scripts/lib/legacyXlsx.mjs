@@ -4,10 +4,10 @@ import { readFile } from "fs/promises";
 import XLSX from "xlsx";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = path.join(__dirname, "../../legacy/data");
+const DATA_DIR = path.join(__dirname, "../../data");
 
 /**
- * @param {string} file - basename under legacy/data, e.g. "dfVoyElm.xlsx"
+ * @param {string} file - basename under data, e.g. "dfVoyElm.xlsx"
  * @param {{[k:string]: string}} [opts] - xlsx read options; uses first sheet, raw numbers for dates/nums
  * @returns {object[]}
  */

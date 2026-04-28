@@ -1,5 +1,5 @@
 /**
- * One-shot import of legacy/data/*.xlsx into a single SQLite file (7 tables).
+ * One-shot import of data/*.xlsx into a single SQLite file (7 tables).
  * Regenerate: node scripts/xlsx-to-sqlite.mjs
  * Requires: xlsx, sql.js (devDependencies)
  */
@@ -12,7 +12,7 @@ import initSqlJs from "sql.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
 const outDb = path.join(root, "legacy/barge_data.sqlite");
-const dataDir = path.join(root, "legacy/data");
+const dataDir = path.join(root, "data");
 
 const INPUTS = [
   "dfBarge.xlsx",
