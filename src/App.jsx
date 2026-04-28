@@ -5,6 +5,8 @@ import BargeView from "./views/BargeView";
 import WeeklyBargeView from "./views/WeeklyBargeView";
 import CapacityView from "./views/CapacityView";
 import ScatterPlotView from "./views/ScatterPlotView";
+import RoutePlanner from './views/RoutePlanner';
+import plannerData from './data/plannerData.json';
 
 export default function App() {
   const [view, setView] = useState("barge");
@@ -76,11 +78,12 @@ export default function App() {
           }}
         >
           {[
-            { id: "barge", label: "Barge View" },
-            { id: "weekly", label: "Weekly Barge View" },
-            { id: "capacity", label: "Transport Capacity" },
-            { id: "scatter", label: "Scatter Plot" },
-          ].map((v) => (
+              { id: "barge", label: "Barge View" },
+              { id: "weekly", label: "Weekly Barge View" },
+              { id: "capacity", label: "Transport Capacity" },
+              { id: "scatter", label: "Scatter Plot" },
+              { id: "planner", label: "Route Planner" },
+            ].map((v) => (
             <button
               key={v.id}
               onClick={() => setView(v.id)}
@@ -108,10 +111,11 @@ export default function App() {
       {/* Content */}
       <div style={{ padding: 24, overflowX: "auto" }}>
         <div style={{ minWidth: view === "barge" || view === "weekly" ? 960 : 600 }}>
-          {view === "barge" && <BargeView legs={legs} />}
-          {view === "weekly" && <WeeklyBargeView legs={legs} />}
-          {view === "capacity" && <CapacityView legs={legs} />}
-          {view === "scatter" && <ScatterPlotView legs={legs} />}
+            {view === "barge" && <BargeView legs={legs} />}
+            {view === "weekly" && <WeeklyBargeView legs={legs} />}
+            {view === "capacity" && <CapacityView legs={legs} />}
+            {view === "scatter" && <ScatterPlotView legs={legs} />}
+            {view === "planner" && <RoutePlanner data={plannerData} />}
         </div>
       </div>
     </div>

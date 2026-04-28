@@ -36,8 +36,8 @@ const PORT_LABELS = {
 const UNIT_TYPES = ["20DV","20HC","40DV","40HC","40RH","45HC"];
 const UNIT_TEU   = { "20DV":1,"20HC":1,"40DV":2,"40HC":2,"40RH":2,"45HC":2 };
 const UNIT_LABELS= {
-  "20DV":"20ft Dry","20HC":"20ft Hi-Cube",
-  "40DV":"40ft Dry","40HC":"40ft Hi-Cube","40RH":"40ft Reefer","45HC":"45ft Hi-Cube"
+  "20DV":"20DV","20HC":"20HC",
+  "40DV":"40DV","40HC":"40HC","40RH":"40RH","45HC":"45HC"
 };
 
 const port = p => PORT_LABELS[p] || p || "—";
@@ -628,8 +628,7 @@ export default function RoutePlanner({ data }) {
                 <div style={{ background:T.errorBg, border:`1px solid ${T.error}44`,
                   borderRadius:T.radiusSm, padding:"10px 14px", fontSize:12, color:T.error }}>
                   <strong>{result.unassigned} containers</strong> could not be assigned —
-                  insufficient capacity on scheduled voyages before {fmtDate(dueDate)}.
-                  Consider splitting the shipment across a wider time window.
+                  insufficient capacity on scheduled voyages.
                 </div>
               )}
 
