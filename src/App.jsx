@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { RAW } from "./data/activeRaw";
+import { useRaw } from "./context/RawDataContext";
 import { theme } from "./data/theme";
 import BargeView from "./views/BargeView";
 import WeeklyBargeView from "./views/WeeklyBargeView";
@@ -9,8 +9,9 @@ import RoutePlanner from './views/RoutePlanner';
 import plannerData from './data/plannerData.json';
 
 export default function App() {
+  const raw = useRaw();
   const [view, setView] = useState("barge");
-  const legs = RAW.legs.filter((l) => l.depart);
+  const legs = raw.legs.filter((l) => l.depart);
 
   return (
     <div
@@ -65,7 +66,7 @@ export default function App() {
               fontFamily: theme.fontMono,
             }}
           >
-            {Object.keys(RAW.barges).length} barges · {legs.length} legs · Planning horizon: 29 Jan – 3 Mar 2026
+            {Object.keys(raw.barges).length} barges · {legs.length} legs · Planning horizon: 29 Jan – 3 Mar 2026
           </div>
         </div>
 

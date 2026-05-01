@@ -1,5 +1,5 @@
 import { useState, useRef } from "react";
-import { RAW } from "../data/activeRaw";
+import { useRaw } from "../context/RawDataContext";
 import { TODAY, PORT_LABELS } from "../data/constants";
 import { statusLevel } from "../utils/legHelpers";
 import { theme } from "../data/theme";
@@ -415,6 +415,7 @@ function BargePositionGraph({ position }) {
 }
 
 export default function WeeklyBargeView({ legs }) {
+  const raw = useRaw();
   const [tooltip, setTooltip] = useState(null);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
   const hideTimeoutRef = useRef(null);
@@ -486,7 +487,7 @@ export default function WeeklyBargeView({ legs }) {
 
     return {
       barge: b,
-      info: RAW.barges[b] || {},
+      info: raw.barges[b] || {},
       bLegs,
       utilization,
       bargeStatus,

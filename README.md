@@ -25,6 +25,46 @@ Build for production:
 npm run build
 ```
 
+## Tech stack
+
+- React 19 (Create React App / `react-scripts`)
+- Recharts for charts
+- Express + better-sqlite3 backend (`server/`)
+
+## Deployment (Railway)
+
+The repo is structured for two Railway services from the same Git repository.
+
+| Service | Root directory | railway.json |
+|---------|----------------|--------------|
+| Frontend | `.` (repo root) | `railway.json` |
+| Backend | `server/` | `server/railway.json` |
+
+**Frontend environment variable (build time):**
+
+```
+REACT_APP_API_URL=https://<your-backend>.up.railway.app
+```
+
+CRA bakes this in at build time. Without it, the app uses the bundled static dataset (fine for local development and tests).
+
+**Backend environment variables:**
+
+```
+DATABASE_PATH=/data/barge-brain.sqlite    # must match the volume mount path
+FRONTEND_URL=https://<your-frontend>.up.railway.app
+```
+
+Attach a Railway volume to the backend service and mount it at `/data`. On first boot the server copies the bundled seed database (`server/data/barge-brain.sqlite`) onto the empty volume automatically.
+
+To regenerate the seed database after a data update:
+
+```bash
+npm run seed:server-db
+```
+
+Commit the updated `server/data/barge-brain.sqlite`.
+
 ## Data
 
 Voyage and barge master data live under `src/data/`. For a detailed description of the upstream dataframe hierarchy (barges, rotations, voyages, terminals, units) and join keys, see **`data documentation.md`**.

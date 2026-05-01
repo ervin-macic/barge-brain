@@ -1,13 +1,14 @@
 import { useState } from "react";
-import { RAW } from "../data/activeRaw";
+import { useRaw } from "../context/RawDataContext";
 import { BARGE_COLORS, PORT_LABELS } from "../data/constants";
 import { barColor, barBgColor } from "../utils/legHelpers";
 import { theme } from "../data/theme";
 import SummaryBar from "../components/SummaryBar";
 
 export default function CapacityView({ legs }) {
+  const raw = useRaw();
   const [bargeFilter, setBargeFilter] = useState("ALL");
-  const barges = ["ALL", ...Object.keys(RAW.barges).sort()];
+  const barges = ["ALL", ...Object.keys(raw.barges).sort()];
 
   const filtered = bargeFilter === "ALL" ? legs : legs.filter((l) => l.barge === bargeFilter);
 
@@ -35,7 +36,7 @@ export default function CapacityView({ legs }) {
     })
     .sort((a, b) => b.avgTeuPct - a.avgTeuPct);
 
-  const bargeStats = Object.entries(RAW.barges).map(([code, info]) => {
+  const bargeStats = Object.entries(raw.barges).map(([code, info]) => {
     const bLegs = legs.filter((l) => l.barge === code && l.teuPct !== null);
     const avgUtil = bLegs.length ? bLegs.reduce((a, l) => a + l.teuPct, 0) / bLegs.length : null;
     const maxUtil = bLegs.length ? Math.max(...bLegs.map((l) => l.teuPct)) : null;
