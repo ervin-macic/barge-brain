@@ -1,8 +1,16 @@
 import { render, screen } from '@testing-library/react';
 import App from './App';
 
-test('renders learn react link', () => {
+test('renders Barge Planner heading', () => {
   render(<App />);
-  const linkElement = screen.getByText(/learn react/i);
-  expect(linkElement).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: /barge planner/i })).toBeInTheDocument();
+});
+
+test('renders navigation buttons for each view', () => {
+  render(<App />);
+  expect(screen.getByRole('button', { name: /^barge view$/i })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /^weekly barge view$/i })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /^transport capacity$/i })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /^scatter plot$/i })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /^route planner$/i })).toBeInTheDocument();
 });
