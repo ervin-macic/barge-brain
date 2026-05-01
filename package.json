@@ -11,6 +11,7 @@
     "react-dom": "^19.2.4",
     "react-scripts": "5.0.1",
     "recharts": "^2.15.2",
+    "serve": "^14.2.4",
     "web-vitals": "^2.1.4"
   },
   "scripts": {
@@ -20,7 +21,8 @@
     "eject": "react-scripts eject",
     "data:import": "node scripts/xlsx-to-sqlite.mjs",
     "data:build-raw": "node scripts/build-raw-data.mjs",
-    "data:validate": "node scripts/validate-raw-legacy.mjs"
+    "data:validate": "node scripts/validate-raw-legacy.mjs",
+    "seed:server-db": "node scripts/seed-barge-brain-sqlite.mjs"
   },
   "eslintConfig": {
     "extends": [
