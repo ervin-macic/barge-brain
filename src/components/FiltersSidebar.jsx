@@ -7,6 +7,7 @@ const STATUS_OPTIONS = [
   { value: "warning", label: "Warning" },
   { value: "critical", label: "Critical" },
   { value: "high", label: "High load (≥90%)" },
+  { value: "pending fix", label: : "Pending Fix" }
 ];
 
 export default function FiltersSidebar({ filters, onFilterChange, legs }) {
