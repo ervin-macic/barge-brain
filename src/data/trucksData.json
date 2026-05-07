@@ -1,0 +1,47 @@
+[
+  {
+    "truck": "IBT-AMI",
+    "transportUser": "Richard van Zeeland",
+    "addressFrom": "VEG",
+    "addressTo": "TIEL",
+    "unitType": "40RH",
+    "nett": 12352,
+    "transportTime": "0911"
+  },
+  {
+    "truck": "IBT-LRD",
+    "transportUser": "Martijn van Rooij",
+    "addressFrom": "VEG",
+    "addressTo": "KAT",
+    "unitType": "40HC",
+    "nett": 24000,
+    "transportTime": "1339"
+  },
+  {
+    "truck": "IBT-ANT",
+    "transportUser": "Richard van Zeeland",
+    "addressFrom": "VEG",
+    "addressTo": "TIEL",
+    "unitType": "40HC",
+    "nett": 18200,
+    "transportTime": "2219"
+  },
+  {
+    "truck": "IBT-AFS",
+    "transportUser": "Richard van Zeeland",
+    "addressFrom": "KAT",
+    "addressTo": "TIEL",
+    "unitType": "40HC",
+    "nett": 15637,
+    "transportTime": "1336"
+  },
+  {
+    "truck": "IBT-MEY",
+    "transportUser": "Richard van Zeeland",
+    "addressFrom": "KAT",
+    "addressTo": "TIEL",
+    "unitType": "40HC",
+    "nett": 24000,
+    "transportTime": "1445"
+  }
+]

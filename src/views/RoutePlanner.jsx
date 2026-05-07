@@ -1,723 +1,642 @@
 import { useState, useMemo } from "react";
+import { theme } from "../data/theme";
+import { TODAY, START } from "../data/constants";
+import {
+  planRoute,
+  getEligibleVoyages,
+  findNoSplitAlternatives,
+  UNIT_TEU,
+  UNIT_WEIGHT_KG,
+  voyageWeightUsed,
+  pct,
+} from "../utils/routePlanner";
+import trucksData from "../data/trucksData.json";
+import PlanInputs from "../components/routePlanner/PlanInputs";
+import PlanEmptyState from "../components/routePlanner/PlanEmptyState";
+import ResultErrorCard from "../components/routePlanner/ResultErrorCard";
+import PlanSummaryBanner from "../components/routePlanner/PlanSummaryBanner";
+import PlanTimeline from "../components/routePlanner/PlanTimeline";
+import AssignmentsTable from "../components/routePlanner/AssignmentsTable";
+import VoyageCard from "../components/routePlanner/VoyageCard";
+import TruckFallbackCard from "../components/routePlanner/TruckFallbackCard";
+import NoSplitAlternatives from "../components/routePlanner/NoSplitAlternatives";
+import CommittedPlansPanel from "../components/routePlanner/CommittedPlansPanel";
 
-const T = {
-  bg:         "#F8FAFC",
-  surface:    "#FFFFFF",
-  surfaceAlt: "#F3F3F5",
-  border:     "rgba(0,0,0,0.09)",
-  borderMid:  "#E2E8F0",
-  text:       "#030213",
-  textSub:    "#64748B",
-  textMuted:  "#94A3B8",
-  accent:     "#0EA5E9",
-  success:    "#10B981",
-  successBg:  "#D1FAE5",
-  warning:    "#F59E0B",
-  warningBg:  "#FEF3C7",
-  error:      "#EF4444",
-  errorBg:    "#FEE2E2",
-  info:       "#6366F1",
-  infoBg:     "#E0E7FF",
-  radius:     10,
-  radiusSm:   6,
-};
+const COMMITTED_PLANS_KEY = "barge_brain_committed_plans";
 
-const BARGE_COLORS = {
-  AFS:"#6366f1", ALF:"#22c55e", ALL:"#f59e0b", AMI:"#14b8a6",
-  AMO:"#a78bfa", ANT:"#f97316", DEC:"#06b6d4", FRS:"#64748b",
-  LEE:"#ec4899", LEH:"#84cc16", LRD:"#fb923c", MEY:"#e879f9", VIC:"#38bdf8"
-};
+const todayStr = TODAY.toISOString().slice(0, 10);
+const startStr = START.toISOString().slice(0, 10);
 
-const PORT_LABELS = {
-  ROTTE:"Rotterdam", VEGHE:"Veghel", OSS:"Oss",
-  TIEL:"Tiel", KAT:"Katendrecht"
-};
+/** Pick a random truck with a random date+time within [currDate, dueDate]. */
+function generateTruckFallback(currDate, dueDate) {
+  const truck = trucksData[Math.floor(Math.random() * trucksData.length)];
+  const fromMs = new Date(currDate).getTime();
+  const toMs = new Date(dueDate).getTime();
+  const randMs = fromMs + Math.random() * (toMs - fromMs);
+  const randDate = new Date(randMs);
+  const dateStr = randDate.toISOString().slice(0, 10);
+  const h = Math.floor(6 + Math.random() * 14);
+  const m = Math.floor(Math.random() * 60);
+  const timeStr = String(h).padStart(2, "0") + String(m).padStart(2, "0");
+  return { ...truck, transportDate: dateStr, transportTime: timeStr };
+}
 
-const UNIT_TYPES = ["20DV","20HC","40DV","40HC","40RH","45HC"];
-const UNIT_TEU   = { "20DV":1,"20HC":1,"40DV":2,"40HC":2,"40RH":2,"45HC":2 };
-const UNIT_LABELS= {
-  "20DV":"20DV","20HC":"20HC",
-  "40DV":"40DV","40HC":"40HC","40RH":"40RH","45HC":"45HC"
-};
-
-const port = p => PORT_LABELS[p] || p || "—";
-const fmtDT = d => d ? new Date(d).toLocaleDateString("en-GB",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}) : "—";
-const fmtDate = d => d ? new Date(d).toLocaleDateString("en-GB",{day:"2-digit",month:"short"}) : "—";
-const pct = (u,m) => m ? Math.round(u/m*100) : 0;
-
-// ── Planner algorithm ────────────────────────────────────────────────────────
 /**
- * Given user inputs (origin, destination, containerCount, containerType,
- * dueDate), find all viable voyages and spread containers across them.
- *
- * Rules:
- * 1. Voyage must go from origin → destination (direct or via ROTTE hub)
- * 2. Voyage must depart after currDate and arrive before dueDate
- * 3. Spread containers across voyages by available capacity (largest-first)
- * 4. Never exceed bargeMaxTeu per voyage leg
- * 5. Return list of assignments: { voyage, containersAssigned, teuNeeded, ... }
+ * Convert a no-split alternative into planRoute-style assignment objects so
+ * the same result components (VoyageCard, AssignmentsTable, etc.) can render it.
  */
-function planRoute({ voyages, origin, destination, containerCount, containerType, currDate, dueDate}) {
-  const now = new Date(currDate);
-  const due = new Date(dueDate);
+function buildAltAssignments(alt, containerCount, containerType, weightPerCntr) {
   const teuPerCntr = UNIT_TEU[containerType] || 2;
-
-  // 1. Get ALL future voyages (don’t filter by due date)
-  const eligible = voyages.filter(v => {
-    if (!v.depart || !v.arrive) return false;
-
-    const dep = new Date(v.depart);
-    if (dep < now) return false;
-
-    const direct = v.portFrom === origin && v.portTo === destination;
-    const viaHub =
-      origin !== "ROTTE" &&
-      destination !== "ROTTE" &&
-      (
-        (v.portFrom === origin && v.portTo === "ROTTE") ||
-        (v.portFrom === "ROTTE" && v.portTo === destination)
-      );
-
-    return direct || viaHub;
-  });
-
-  if (eligible.length === 0) {
-    return { assignments: [], totalTeu: 0, unassigned: containerCount, error: "no_voyages" };
-  }
-
-  // 2. Split into on-time vs late
-  const candidates = eligible
-    .map(v => {
-      const arr = new Date(v.arrive);
-      const availTeu = Math.max(0, v.bargeMaxTeu - v.teuUsed);
-      const availCntrs = Math.floor(availTeu / teuPerCntr);
-
-      return {
-        ...v,
-        availTeu,
-        availCntrs,
-        isLate: arr > due,
-      };
-    })
-    .filter(v => v.availCntrs > 0);
-
-  if (candidates.length === 0) {
-    return { assignments: [], totalTeu: 0, unassigned: containerCount, error: "no_capacity" };
-  }
-
-  // 3. Sort:
-  // - On-time first
-  // - Then by departure
-  // - Then by capacity
-  candidates.sort((a, b) => {
-    if (a.isLate !== b.isLate) return a.isLate ? 1 : -1;
-    const depDiff = new Date(a.depart) - new Date(b.depart);
-    if (depDiff !== 0) return depDiff;
-    return b.availTeu - a.availTeu;
-  });
-
-  // 4. Assign containers
-  let remaining = containerCount;
-  const assignments = [];
-
-  for (const v of candidates) {
-    if (remaining <= 0) break;
-
-    const assign = Math.min(remaining, v.availCntrs);
-    const teuAssigned = assign * teuPerCntr;
-    const newTeu = v.teuUsed + teuAssigned;
-    const teuPctAfter = pct(newTeu, v.bargeMaxTeu);
-
-    assignments.push({
+  return alt.voyages.map((v) => {
+    const teuAssigned = containerCount * teuPerCntr;
+    const teuAfter = v.teuUsed + teuAssigned;
+    const teuPctAfter = pct(teuAfter, v.bargeMaxTeu);
+    const weightAssigned = containerCount * (weightPerCntr || 0);
+    const wUsed = voyageWeightUsed(v);
+    const weightAfter = wUsed + weightAssigned;
+    const weightPctAfter =
+      v.bargeMaxWeight && weightPerCntr ? pct(weightAfter, v.bargeMaxWeight) : 0;
+    return {
       voyage: v,
-      containersAssigned: assign,
+      containersAssigned: containerCount,
       teuAssigned,
-      teuAfter: newTeu,
+      teuAfter,
       teuPctAfter,
-      isLate: v.isLate,
-      status: v.isLate
+      weightAssigned,
+      weightAfter,
+      weightPctAfter,
+      isLate: alt.isLate,
+      status: alt.isLate
         ? "late"
-        : teuPctAfter >= 95
+        : teuPctAfter >= 95 || weightPctAfter >= 95
         ? "critical"
-        : teuPctAfter >= 80
+        : teuPctAfter >= 80 || weightPctAfter >= 80
         ? "warning"
         : "ok",
-    });
+    };
+  });
+}
 
-    remaining -= assign;
+/** Build CSV string from an array of committed plan objects. */
+function buildCsv(plans) {
+  const headers = [
+    "Plan ID",
+    "Committed At",
+    "Origin",
+    "Destination",
+    "Count",
+    "Unit Type",
+    "Weight/Cntr (kg)",
+    "Flow",
+    "Curr Date",
+    "Due Date",
+    "Row Type",
+    "Voyage Code",
+    "Barge",
+    "From",
+    "To",
+    "Departs",
+    "Arrives",
+    "Containers Assigned",
+    "TEU Assigned",
+    "Status",
+    "Truck",
+    "Transport User",
+    "Transport Date",
+    "Transport Time",
+  ];
+
+  const rows = [];
+  for (const plan of plans) {
+    const base = [
+      plan.id,
+      plan.committedAt,
+      plan.inputs.origin,
+      plan.inputs.destination,
+      plan.inputs.count,
+      plan.inputs.unitType,
+      plan.inputs.weightPerCntr,
+      plan.inputs.importExport === "E" ? "Export" : "Import",
+      plan.inputs.currDate,
+      plan.inputs.dueDate,
+    ];
+    for (const a of plan.assignments) {
+      rows.push([
+        ...base,
+        "barge",
+        a.voyage.code,
+        a.voyage.barge,
+        a.voyage.portFrom,
+        a.voyage.portTo,
+        a.voyage.depart,
+        a.voyage.arrive,
+        a.containersAssigned,
+        a.teuAssigned,
+        a.status,
+        "",
+        "",
+        "",
+        "",
+      ]);
+    }
+    if (plan.truckFallback) {
+      const t = plan.truckFallback;
+      rows.push([
+        ...base,
+        "truck",
+        "",
+        "",
+        t.addressFrom,
+        t.addressTo,
+        "",
+        "",
+        plan.inputs.count,
+        "",
+        "",
+        t.truck,
+        t.transportUser,
+        t.transportDate,
+        t.transportTime,
+      ]);
+    }
   }
 
-  return {
-    assignments,
-    totalTeu: containerCount * teuPerCntr,
-    teuPerCntr,
-    unassigned: remaining,
-    error: null,
-  };
+  return [headers, ...rows]
+    .map((r) =>
+      r
+        .map((cell) => `"${String(cell == null ? "" : cell).replace(/"/g, '""')}"`)
+        .join(",")
+    )
+    .join("\n");
 }
 
-// ── Sub-components ────────────────────────────────────────────────────────────
-function Label({ children, ...p }) {
-  return <label style={{ fontSize:12, fontWeight:600, color:T.textSub,
-    display:"block", marginBottom:5, ...p }}>{children}</label>;
-}
-
-function Input({ style, ...p }) {
-  return <input style={{
-    width:"100%", padding:"8px 10px", borderRadius:T.radiusSm,
-    border:`1px solid ${T.borderMid}`, fontSize:13, background:T.surface,
-    color:T.text, boxSizing:"border-box", outline:"none", ...style
-  }} {...p} />;
-}
-
-function Select({ style, children, ...p }) {
-  return <select style={{
-    width:"100%", padding:"8px 10px", borderRadius:T.radiusSm,
-    border:`1px solid ${T.borderMid}`, fontSize:13, background:T.surface,
-    color:T.text, boxSizing:"border-box", outline:"none", ...style
-  }} {...p}>{children}</select>;
-}
-
-function Card({ children, style }) {
-  return <div style={{
-    background:T.surface, borderRadius:T.radius,
-    border:`1px solid ${T.border}`, padding:"18px 20px", ...style
-  }}>{children}</div>;
-}
-
-function TeuBar({ used, max, extra=0, showLabel=true }) {
-  const usedPct  = Math.min(100, pct(used, max));
-  const extraPct = Math.min(100 - usedPct, pct(extra, max));
-  const totalPct = usedPct + extraPct;
-  const color = totalPct >= 95 ? T.error : totalPct >= 80 ? T.warning : T.success;
-
-  return (
-    <div>
-      <div style={{ height:8, background:T.surfaceAlt, borderRadius:4, overflow:"hidden", position:"relative" }}>
-        <div style={{ position:"absolute", left:0, top:0, height:"100%",
-          width:`${usedPct}%`, background:T.textMuted, borderRadius:4, transition:"width 0.3s" }} />
-        <div style={{ position:"absolute", left:`${usedPct}%`, top:0, height:"100%",
-          width:`${extraPct}%`, background:color, borderRadius:4, opacity:0.85, transition:"all 0.3s" }} />
-      </div>
-      {showLabel && (
-        <div style={{ display:"flex", justifyContent:"space-between", marginTop:3 }}>
-          <span style={{ fontSize:10, color:T.textMuted }}>
-            {used} used {extra > 0 ? `+ ${extra} planned` : ""}
-          </span>
-          <span style={{ fontSize:10, color: totalPct >= 95 ? T.error : T.textSub, fontWeight:600 }}>
-            {totalPct}% / {max} TEU
-          </span>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function StatusPill({ status, children }) {
-  const map = {
-  ok:       { bg:T.successBg, color:T.success },
-  warning:  { bg:T.warningBg, color:T.warning },
-  critical: { bg:T.errorBg,   color:T.error },
-  late:     { bg:"#FFE4E6",   color:"#BE123C" },
-  info:     { bg:T.infoBg,    color:T.info },
-};
-  const s = map[status] || map.info;
-  return (
-    <span style={{ background:s.bg, color:s.color, borderRadius:4,
-      padding:"2px 7px", fontSize:11, fontWeight:700 }}>
-      {children}
-    </span>
-  );
-}
-
-function VoyageCard({ assignment, index }) {
-  const { voyage: v, containersAssigned, teuAssigned, teuAfter, teuPctAfter, status } = assignment;
-  const bc = BARGE_COLORS[v.barge] || "#64748b";
-  const [open, setOpen] = useState(false);
-  const isLate = status === "late";
-
-  return (
-      <div style={{
-        border: `1.5px solid ${
-          isLate ? T.error :
-          status === "critical" ? T.error :
-          status === "warning" ? T.warning :
-          T.borderMid
-        }`,
-        borderRadius: T.radius,
-        background: isLate ? T.errorBg : T.surface,
-        overflow: "hidden",
-        transition: "all 0.2s"
-      }}>
-      {/* Header row */}
-      <div style={{ display:"flex", alignItems:"center", gap:12, padding:"14px 16px",
-        cursor:"pointer", userSelect:"none" }}
-        onClick={() => setOpen(o => !o)}>
-
-        {/* Assignment number */}
-        <div style={{ width:28, height:28, borderRadius:"50%", background:T.infoBg,
-          color:T.info, display:"flex", alignItems:"center", justifyContent:"center",
-          fontSize:12, fontWeight:700, flexShrink:0 }}>
-          {index + 1}
-        </div>
-
-        {/* Barge dot + name */}
-        <div style={{ display:"flex", alignItems:"center", gap:6, minWidth:0 }}>
-          <span style={{ width:10, height:10, borderRadius:"50%", background:bc, flexShrink:0 }}/>
-          <span style={{ fontSize:13, fontWeight:700, color:T.text }}>{v.barge}</span>
-          <span style={{ fontSize:11, color:T.textMuted }}>· {v.bargeName}</span>
-          <span style={{ fontSize:11, color:T.textSub, marginLeft:4,
-            fontFamily:"monospace", background:T.surfaceAlt,
-            padding:"1px 6px", borderRadius:3 }}>{v.code}</span>
-        </div>
-
-        {/* Route arrow */}
-        <div style={{ display:"flex", alignItems:"center", gap:4, fontSize:12, color:T.textSub }}>
-          <span style={{ fontWeight:600, color:T.text }}>{port(v.portFrom)}</span>
-          <span style={{ color:T.textMuted }}>→</span>
-          <span style={{ fontWeight:600, color:T.text }}>{port(v.portTo)}</span>
-        </div>
-
-        {/* Containers assigned */}
-        <div style={{ marginLeft:"auto", display:"flex", alignItems:"center", gap:12, flexShrink:0 }}>
-          <div style={{ textAlign:"right" }}>
-            <div style={{ fontSize:18, fontWeight:700, color:T.info, lineHeight:1 }}>
-              {containersAssigned}
-            </div>
-            <div style={{ fontSize:10, color:T.textMuted }}>containers</div>
-          </div>
-
-          <StatusPill status={status}>{status === "late" ? "LATE" : `${teuPctAfter}%`}</StatusPill>
-          <span style={{ color:T.textMuted, fontSize:14 }}>{open ? "▲" : "▼"}</span>
-        </div>
-      </div>
-
-      {/* TEU bar always visible */}
-      <div style={{ padding:"0 16px 10px" }}>
-        <TeuBar used={v.teuUsed} max={v.bargeMaxTeu} extra={teuAssigned} />
-      </div>
-
-      {/* Expanded detail */}
-      {open && (
-        <div style={{ borderTop:`1px solid ${T.borderMid}`, padding:"14px 16px",
-          background:T.bg, display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
-          <div>
-            <div style={{ fontSize:10, fontWeight:700, color:T.textMuted, textTransform:"uppercase",
-              letterSpacing:1, marginBottom:8 }}>Schedule</div>
-            {[
-              ["Departs", v.depart],
-              ["Arrives", v.arrive],
-            ].map(([l,d]) => (
-              <div key={l} style={{ display:"flex", justifyContent:"space-between",
-                fontSize:12, padding:"3px 0", borderBottom:`1px solid ${T.borderMid}` }}>
-                <span style={{ color:T.textSub }}>{l}</span>
-                <span style={{ fontFamily:"monospace", color:T.text }}>{fmtDT(d)}</span>
-              </div>
-            ))}
-          </div>
-
-          <div>
-            <div style={{ fontSize:10, fontWeight:700, color:T.textMuted, textTransform:"uppercase",
-              letterSpacing:1, marginBottom:8 }}>Capacity after assignment</div>
-            {[
-              ["Currently used",  `${v.teuUsed} TEU`],
-              ["Your containers", `+${teuAssigned} TEU (${containersAssigned} × ${teuAssigned/containersAssigned})`],
-              ["Total after",     `${teuAfter} / ${v.bargeMaxTeu} TEU`],
-              ["Remaining space", `${v.bargeMaxTeu - teuAfter} TEU`],
-            ].map(([l,val]) => (
-              <div key={l} style={{ display:"flex", justifyContent:"space-between",
-                fontSize:12, padding:"3px 0", borderBottom:`1px solid ${T.borderMid}` }}>
-                <span style={{ color:T.textSub }}>{l}</span>
-                <span style={{ fontFamily:"monospace", color:T.text }}>{val}</span>
-              </div>
-            ))}
-          </div>
-
-          {/* Stops */}
-          {v.stops && v.stops.length > 0 && (
-            <div style={{ gridColumn:"1/-1" }}>
-              <div style={{ fontSize:10, fontWeight:700, color:T.textMuted, textTransform:"uppercase",
-                letterSpacing:1, marginBottom:8 }}>Terminal stops on this voyage</div>
-              <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
-                {v.stops.map((s, i) => (
-                  <div key={i} style={{ background:T.surface, border:`1px solid ${T.borderMid}`,
-                    borderRadius:T.radiusSm, padding:"6px 10px", fontSize:11 }}>
-                    <div style={{ fontWeight:600, color:T.text }}>{port(s.address)}</div>
-                    <div style={{ color:T.textMuted, fontSize:10 }}>
-                      ETA {fmtDate(s.eta)} · {s.ld === "L" ? "Load" : "Discharge"}
-                    </div>
-                    {s.cargoClose && <div style={{ color:T.warning, fontSize:10 }}>
-                      Closes {fmtDate(s.cargoClose)}
-                    </div>}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Timeline visualisation ────────────────────────────────────────────────────
-function PlanTimeline({ assignments, dueDate }) {
-  if (!assignments.length) return null;
-
-  const allDates = assignments.flatMap(a => [a.voyage.depart, a.voyage.arrive].filter(Boolean));
-  const minD = new Date(Math.min(...allDates.map(d => new Date(d))));
-  const maxD = dueDate ? new Date(dueDate) : new Date(Math.max(...allDates.map(d => new Date(d))));
-  const span = maxD - minD;
-  const toX = d => ((new Date(d) - minD) / span) * 100;
-
-  return (
-    <div style={{ overflowX:"auto" }}>
-      <div style={{ minWidth:500, position:"relative", paddingTop:8 }}>
-        {/* Track */}
-        <div style={{ height:2, background:T.borderMid, margin:"20px 0 8px", position:"relative" }}>
-          {/* Due date marker */}
-          {dueDate && (
-            <div style={{ position:"absolute", left:`${toX(dueDate)}%`, top:-20, transform:"translateX(-50%)" }}>
-              <div style={{ fontSize:9, color:T.error, fontWeight:700, whiteSpace:"nowrap" }}>DUE</div>
-              <div style={{ width:1, height:24, background:T.error, margin:"0 auto" }} />
-            </div>
-          )}
-        </div>
-
-        {/* Voyage bars */}
-        {assignments.map((a, i) => {
-          const bc = BARGE_COLORS[a.voyage.barge] || "#64748b";
-          const x1 = toX(a.voyage.depart);
-          const x2 = toX(a.voyage.arrive);
-          const w = Math.max(1, x2 - x1);
-          return (
-            <div key={i} style={{ position:"relative", height:34, marginBottom:4 }}>
-              <div style={{
-                position:"absolute", left:`${x1}%`, width:`${w}%`,
-                height:24, borderRadius:4,
-                background: bc + "33",
-                border:`1.5px solid ${bc}`,
-                display:"flex", alignItems:"center", padding:"0 6px", overflow:"hidden",
-                minWidth:32
-              }}>
-                <span style={{ fontSize:10, fontWeight:700, color:bc, whiteSpace:"nowrap" }}>
-                  {a.voyage.barge} · {a.containersAssigned} ctrs
-                </span>
-              </div>
-              {/* Depart label */}
-              <div style={{ position:"absolute", left:`${x1}%`, top:26,
-                fontSize:9, color:T.textMuted, transform:"translateX(-50%)", whiteSpace:"nowrap" }}>
-                {fmtDate(a.voyage.depart)}
-              </div>
-              {/* Arrive label */}
-              <div style={{ position:"absolute", left:`${Math.min(99, x2)}%`, top:26,
-                fontSize:9, color:T.textMuted, transform:"translateX(-50%)", whiteSpace:"nowrap" }}>
-                {fmtDate(a.voyage.arrive)}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-// ── Main component ────────────────────────────────────────────────────────────
 export default function RoutePlanner({ data }) {
-  const voyages = data?.voyages || [];
-  const ports   = data?.ports   || [];
+  const voyages = useMemo(() => data?.voyages || [], [data]);
+  const ports = useMemo(() => data?.ports || [], [data]);
 
-  // Form state
-  const [origin,      setOrigin]      = useState("ROTTE");
+  const [origin, setOrigin] = useState("ROTTE");
   const [destination, setDestination] = useState("VEGHE");
-  const [count,       setCount]       = useState(30);
-  const [unitType,    setUnitType]    = useState("40HC");
-  const [currDate,     setCurrentDate]     = useState("2026-01-29");
-  const [dueDate,     setDueDate]     = useState("2026-03-01");
-  const [result,      setResult]      = useState(null);
-  const [hasPlanned,  setHasPlanned]  = useState(false);
+  const [count, setCount] = useState(30);
+  const [unitType, setUnitType] = useState("40HC");
+  const [weightPerCntr, setWeightPerCntr] = useState(UNIT_WEIGHT_KG["40HC"]);
+  const [importExport, setImportExport] = useState("I");
+  const [currDate, setCurrDate] = useState(todayStr > startStr ? todayStr : startStr);
+  const [dueDate, setDueDate] = useState("2026-03-01");
+  const [result, setResult] = useState(null);
+  const [noSplitAlts, setNoSplitAlts] = useState(null);
+  const [hasPlanned, setHasPlanned] = useState(false);
+  // null = main plan active; number = index into noSplitAlts of the chosen alt
+  const [selectedAltIndex, setSelectedAltIndex] = useState(null);
+
+  // Session-only: tracks TEU + weight added to voyages by committed plans.
+  // Resets on page reload — keeping plannerData baseline clean.
+  const [committedCapacity, setCommittedCapacity] = useState({});
+  // { [voyageCode]: { addedTeu: number, addedWeight: number } }
+
+  // Persistent committed plan records for display and CSV export.
+  const [committedPlans, setCommittedPlans] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem(COMMITTED_PLANS_KEY) || "[]");
+    } catch {
+      return [];
+    }
+  });
+
+  // Apply committed capacity adjustments to voyage list so the planner
+  // reflects containers already assigned in this session.
+  const adjustedVoyages = useMemo(() => {
+    if (!Object.keys(committedCapacity).length) return voyages;
+    return voyages.map((v) => {
+      const adj = committedCapacity[v.code];
+      if (!adj) return v;
+      return {
+        ...v,
+        teuUsed: v.teuUsed + adj.addedTeu,
+        _extraWeight: (v._extraWeight || 0) + adj.addedWeight,
+      };
+    });
+  }, [voyages, committedCapacity]);
 
   const teuNeeded = count * (UNIT_TEU[unitType] || 2);
+  const weightNeeded = count * weightPerCntr;
 
-  // Summary stats for the input panel
-  const routeVoyages = useMemo(() =>
-    voyages.filter(v =>
-      (v.portFrom === origin && v.portTo === destination) ||
-      (v.portFrom === origin && v.portTo === "ROTTE") ||
-      (v.portFrom === "ROTTE" && v.portTo === destination)
-    ), [voyages, origin, destination]);
+  const routeVoyages = useMemo(
+    () => getEligibleVoyages({ voyages: adjustedVoyages, origin, destination, currDate }),
+    [adjustedVoyages, origin, destination, currDate]
+  );
 
-  const totalAvailTeu = useMemo(() =>
-    routeVoyages.reduce((s, v) => s + Math.max(0, v.teuAvail), 0),
-  [routeVoyages]);
+  const totalAvailTeu = useMemo(
+    () => routeVoyages.reduce((s, v) => s + Math.max(0, v.bargeMaxTeu - v.teuUsed), 0),
+    [routeVoyages]
+  );
+
+  const totalAvailWeight = useMemo(
+    () =>
+      routeVoyages.reduce((s, v) => {
+        const wUsed = voyageWeightUsed(v);
+        return s + Math.max(0, (v.bargeMaxWeight || 0) - wUsed);
+      }, 0),
+    [routeVoyages]
+  );
+
+  // When an alternative is selected, compute its planRoute-style assignments
+  // so the same result components (timeline, table, voyage cards) can render it.
+  const altAssignments = useMemo(() => {
+    if (selectedAltIndex === null || !noSplitAlts || !noSplitAlts[selectedAltIndex]) return null;
+    return buildAltAssignments(noSplitAlts[selectedAltIndex], count, unitType, weightPerCntr);
+  }, [selectedAltIndex, noSplitAlts, count, unitType, weightPerCntr]);
 
   function handlePlan() {
-    const r = planRoute({ voyages, origin, destination, containerCount: count, containerType: unitType, currDate, dueDate });
+    const r = planRoute({
+      voyages: adjustedVoyages,
+      origin,
+      destination,
+      containerCount: count,
+      containerType: unitType,
+      weightPerCntr,
+      importExport,
+      currDate,
+      dueDate,
+    });
+
+    if (r.error === "export_late") {
+      r.truckFallback = generateTruckFallback(currDate, dueDate);
+    }
+
     setResult(r);
+    setSelectedAltIndex(null);
+
+    const alts = findNoSplitAlternatives({
+      voyages: adjustedVoyages,
+      origin,
+      destination,
+      containerCount: count,
+      containerType: unitType,
+      weightPerCntr,
+      currDate,
+      dueDate,
+    });
+    setNoSplitAlts(alts);
     setHasPlanned(true);
   }
 
+  function handleFormChange(patch) {
+    if ("origin" in patch) setOrigin(patch.origin);
+    if ("destination" in patch) setDestination(patch.destination);
+    if ("count" in patch) setCount(patch.count);
+    if ("unitType" in patch) {
+      setUnitType(patch.unitType);
+      // Reset weight default when unit type changes
+      setWeightPerCntr(UNIT_WEIGHT_KG[patch.unitType] || 24000);
+    }
+    if ("weightPerCntr" in patch) setWeightPerCntr(patch.weightPerCntr);
+    if ("importExport" in patch) setImportExport(patch.importExport);
+    if ("currDate" in patch) setCurrDate(patch.currDate);
+    if ("dueDate" in patch) setDueDate(patch.dueDate);
+    setResult(null);
+    setNoSplitAlts(null);
+    setSelectedAltIndex(null);
+  }
+
+  function handleCommit() {
+    // Determine which assignments to commit: selected alternative or main plan
+    const isAlt = altAssignments !== null;
+    const assignments = isAlt ? altAssignments : (result?.assignments ?? []);
+    const truckFallback = isAlt ? null : (result?.truckFallback ?? null);
+
+    if (!assignments.length && !truckFallback) return;
+
+    // Update session-level capacity so subsequent plans reflect these containers
+    if (assignments.length) {
+      setCommittedCapacity((prev) => {
+        const next = { ...prev };
+        for (const a of assignments) {
+          const code = a.voyage.code;
+          const existing = next[code] || { addedTeu: 0, addedWeight: 0 };
+          next[code] = {
+            addedTeu: existing.addedTeu + a.teuAssigned,
+            addedWeight: existing.addedWeight + a.containersAssigned * weightPerCntr,
+          };
+        }
+        return next;
+      });
+    }
+
+    // Persist committed plan record for display/CSV
+    const plan = {
+      id: `plan_${Date.now()}`,
+      committedAt: new Date().toISOString(),
+      inputs: {
+        origin,
+        destination,
+        count,
+        unitType,
+        weightPerCntr,
+        importExport,
+        currDate,
+        dueDate,
+      },
+      assignments,
+      truckFallback,
+      isAlternative: isAlt,
+    };
+
+    const updatedPlans = [...committedPlans, plan];
+    setCommittedPlans(updatedPlans);
+    try {
+      localStorage.setItem(COMMITTED_PLANS_KEY, JSON.stringify(updatedPlans));
+    } catch {
+      // localStorage unavailable — plan still visible in this session
+    }
+
+    // Clear current result so the user can plan again with updated capacity
+    setResult(null);
+    setNoSplitAlts(null);
+    setSelectedAltIndex(null);
+    setHasPlanned(false);
+  }
+
+  function handleDownloadCsv() {
+    if (!committedPlans.length) return;
+    const csv = buildCsv(committedPlans);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `committed_plans_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  function handleClearPlans() {
+    setCommittedPlans([]);
+    try {
+      localStorage.removeItem(COMMITTED_PLANS_KEY);
+    } catch {
+      // ignore
+    }
+  }
+
   const canPlan = origin !== destination && count >= 0 && dueDate && dueDate > currDate;
-  const assignedTotal = result?.assignments.reduce((s, a) => s + a.containersAssigned, 0) || 0;
+  const assignedTotal = result?.assignments.reduce((s, a) => s + a.containersAssigned, 0) ?? 0;
+
+  const showError =
+    hasPlanned &&
+    result &&
+    (result.assignments.length === 0 || result.error === "no_capacity");
+
+  const showResults = hasPlanned && result?.assignments.length > 0;
+  const showTruck = hasPlanned && result?.truckFallback;
+
+  // Show no-split alts when the main plan splits across >1 voyage,
+  // or when there's a truck fallback but barge alts exist
+  const showNoSplitAlts =
+    noSplitAlts &&
+    noSplitAlts.length > 0 &&
+    (result?.assignments.length > 1 || result?.error === "export_late");
+
+  const canCommit =
+    hasPlanned &&
+    (altAssignments !== null ||
+      (result && (result.assignments.length > 0 || result.truckFallback)));
+
+  // Assignments to actually render (alt takes precedence when selected)
+  const displayAssignments = altAssignments ?? result?.assignments ?? [];
+  const displayIsAlt = altAssignments !== null;
 
   return (
-    <div style={{ fontFamily:"'DM Sans','Segoe UI',system-ui,sans-serif",
-      background:T.bg, minHeight:"100vh", padding:"24px" }}>
-
+    <div style={{ minHeight: "100vh" }}>
       {/* Page header */}
-      <div style={{ marginBottom:24 }}>
-        <h1 style={{ margin:0, fontSize:20, fontWeight:700, color:T.text, letterSpacing:-0.4 }}>
+      <div style={{ marginBottom: 24 }}>
+        <h1
+          style={{
+            margin: 0,
+            fontSize: 20,
+            fontWeight: 700,
+            color: theme.textPrimary,
+            letterSpacing: -0.4,
+          }}
+        >
           Route Planner
         </h1>
+        {Object.keys(committedCapacity).length > 0 && (
+          <div
+            style={{
+              fontSize: 11,
+              color: theme.success,
+              marginTop: 4,
+            }}
+          >
+            Session capacity adjusted — {Object.keys(committedCapacity).length} voyage
+            {Object.keys(committedCapacity).length !== 1 ? "s" : ""} updated from committed plans
+          </div>
+        )}
       </div>
 
-      <div style={{ display:"grid", gridTemplateColumns:"340px 1fr", gap:20, alignItems:"start" }}>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "340px 1fr",
+          gap: 20,
+          alignItems: "start",
+        }}
+      >
+        {/* Left: input panel */}
+        <PlanInputs
+          value={{ origin, destination, count, unitType, weightPerCntr, importExport, currDate, dueDate }}
+          onChange={handleFormChange}
+          ports={ports}
+          summary={{ teuNeeded, weightNeeded, voyageCount: routeVoyages.length, totalAvailTeu, totalAvailWeight }}
+          canPlan={canPlan}
+          onPlan={handlePlan}
+        />
 
-        {/* ── LEFT: Input panel ── */}
-        <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
-          <Card>
-            <div style={{ fontSize:13, fontWeight:700, color:T.text, marginBottom:16 }}>
-              Planning inputs
-            </div>
+        {/* Right: results */}
+        <div>
+          {!hasPlanned && <PlanEmptyState />}
 
-            <div style={{ marginBottom:14 }}>
-              <Label>Origin</Label>
-              <Select value={origin} onChange={e => { setOrigin(e.target.value); setResult(null); }}>
-                {ports.map(p => <option key={p} value={p}>{port(p)}</option>)}
-              </Select>
-            </div>
+          {showError && (
+            <ResultErrorCard
+              error={result.error}
+              origin={origin}
+              destination={destination}
+              dueDate={dueDate}
+            />
+          )}
 
-            <div style={{ marginBottom:14 }}>
-              <Label>Destination</Label>
-              <Select value={destination} onChange={e => { setDestination(e.target.value); setResult(null); }}>
-                {ports.filter(p => p !== origin).map(p => <option key={p} value={p}>{port(p)}</option>)}
-              </Select>
-            </div>
-
-            <div style={{ marginBottom:14 }}>
-              <Label>Number of containers</Label>
-              <Input type="number" min={-1} max={500} value={count}
-                onChange={e => { setCount(parseInt(e.target.value)); setResult(null); }} />
-            </div>
-
-            <div style={{ marginBottom:14 }}>
-              <Label>Container type</Label>
-              <Select value={unitType} onChange={e => { setUnitType(e.target.value); setResult(null); }}>
-                {UNIT_TYPES.map(u => (
-                  <option key={u} value={u}>{UNIT_LABELS[u]} ({UNIT_TEU[u]} TEU)</option>
-                ))}
-              </Select>
-            </div>
-            <div style={{ marginBottom:14 }}>
-              <Label>Current date (planning starts from)</Label>
-              <Input
-                type="date"
-                value={currDate}
-                min="2026-01-29"
-                max="2026-03-03"
-                onChange={e => {
-                  setCurrentDate(e.target.value);
-                  setResult(null);
-                }}
+          {showTruck && (
+            <div style={{ marginTop: showError ? 16 : 0 }}>
+              <TruckFallbackCard
+                truckFallback={result.truckFallback}
+                containerCount={count}
               />
             </div>
-            <div style={{ marginBottom:20 }}>
-              <Label>Due date (must arrive by)</Label>
-              <Input type="date" value={dueDate} min="2026-01-29" max="2027-03-03"
-                onChange={e => { setDueDate(e.target.value); setResult(null); }} />
-            </div>
-
-            {/* Pre-plan summary */}
-            <div style={{ background:T.surfaceAlt, borderRadius:T.radiusSm,
-              padding:"10px 12px", marginBottom:16, fontSize:12 }}>
-              <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
-                <span style={{ color:T.textSub }}>TEU required</span>
-                <span style={{ fontWeight:700, fontFamily:"monospace" }}>{teuNeeded} TEU</span>
-              </div>
-              <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
-                <span style={{ color:T.textSub }}>Matching voyages</span>
-                <span style={{ fontWeight:700, fontFamily:"monospace" }}>{routeVoyages.length}</span>
-              </div>
-              <div style={{ display:"flex", justifyContent:"space-between" }}>
-                <span style={{ color:T.textSub }}>Available TEU (total)</span>
-                <span style={{ fontWeight:700, fontFamily:"monospace",
-                  color: totalAvailTeu >= teuNeeded ? T.success : T.error }}>
-                  {Math.round(totalAvailTeu)} TEU
-                </span>
-              </div>
-            </div>
-
-            <button onClick={handlePlan} disabled={!canPlan} style={{
-              width:"100%", padding:"10px", borderRadius:T.radiusSm,
-              background: canPlan ? T.info : T.borderMid,
-              color: canPlan ? "#fff" : T.textMuted,
-              border:"none", fontSize:14, fontWeight:700, cursor: canPlan ? "pointer" : "not-allowed",
-              transition:"background 0.15s"
-            }}>
-              Suggest route →
-            </button>
-
-            {origin === destination && (
-              <p style={{ fontSize:11, color:T.error, margin:"8px 0 0", textAlign:"center" }}>
-                Origin and destination must be different
-              </p>
-            )}
-          </Card>
-
-        </div>
-        <div>
-          {!hasPlanned && (
-            <div style={{ display:"flex", flexDirection:"column", alignItems:"center",
-              justifyContent:"center", padding:"80px 20px", color:T.textMuted }}>
-              <div style={{ fontSize:18, fontWeight:800 }}>Route Planner</div>
-              <div style={{ fontSize:14, fontWeight:600 }}>Set your parameters and click "Suggest route"</div>
-              <div style={{ fontSize:12, marginTop:4 }}>
-              Indicate origin, destination, current date, due date, containters and container types.
-              </div>
-            </div>
-          )}
-          {hasPlanned && result?.assignments.length === 0 && (
-            <Card style={{ borderColor:T.error, textAlign:"center", padding:40 }}>
-              <div style={{ fontSize:24, marginBottom:8 }}>⚠️</div>
-              <div style={{ fontWeight:700, color:T.error, fontSize:14 }}>No voyages found</div>
-              <div style={{ color:T.textSub, fontSize:12, marginTop:4 }}>
-                No scheduled voyages match {port(origin)} → {port(destination)} arriving before {fmtDate(dueDate)}.
-                Try extending the due date or check the route.
-              </div>
-            </Card>
           )}
 
-          {hasPlanned && result?.error === "no_capacity" && (
-            <Card style={{ borderColor:T.warning, textAlign:"center", padding:40 }}>
-              <div style={{ fontSize:24, marginBottom:8 }}>📦</div>
-              <div style={{ fontWeight:700, color:T.warning, fontSize:14 }}>No capacity available</div>
-              <div style={{ color:T.textSub, fontSize:12, marginTop:4 }}>
-                Voyages exist on this route but are all at or near full capacity.
-                Try a later due date to include more voyages.
-              </div>
-            </Card>
-          )}
+          {(showResults || displayIsAlt) && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              {/* Alternative-active banner */}
+              {displayIsAlt && (
+                <div
+                  style={{
+                    background: theme.infoBg,
+                    border: `1.5px solid ${theme.info}`,
+                    borderRadius: theme.radius.md,
+                    padding: "10px 14px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                  }}
+                >
+                  <span style={{ fontSize: 13, color: theme.info, fontWeight: 700, flex: 1 }}>
+                    Showing selected alternative —{" "}
+                    {noSplitAlts[selectedAltIndex].voyages.length === 1 ? "1 direct voyage" : "2-leg journey via Rotterdam"} for all {count} containers
+                  </span>
+                  <button
+                    onClick={() => setSelectedAltIndex(null)}
+                    style={{
+                      padding: "4px 12px",
+                      borderRadius: theme.radius.sm,
+                      border: `1px solid ${theme.info}`,
+                      background: "transparent",
+                      color: theme.info,
+                      fontSize: 11,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                  >
+                    ↩ Back to suggested plan
+                  </button>
+                </div>
+              )}
 
-          {hasPlanned && result?.assignments.length > 0 && (
-            <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+              {!displayIsAlt && (
+                <PlanSummaryBanner
+                  assignedTotal={assignedTotal}
+                  result={result}
+                  count={count}
+                />
+              )}
 
-              {/* Summary banner */}
-              <Card style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:0,
-                padding:0, overflow:"hidden" }}>
-                {[
-                  { label:"Containers", value: assignedTotal, sub: `of ${count} requested`,
-                    color: assignedTotal === count ? T.success : T.warning },
-                  { label:"Unassigned",  value: result.unassigned, sub:"need manual planning",
-                    color: result.unassigned > 0 ? T.error : T.textMuted },
-                  { label:"Voyages used", value: result.assignments.length, sub:"across schedule", color:T.info },
-                  { label:"TEU needed",   value: result.totalTeu, sub:`${count} × ${result.teuPerCntr} TEU`, color:T.text },
-                ].map(({ label, value, sub, color }, i) => (
-                  <div key={label} style={{
-                    padding:"16px 20px", textAlign:"center",
-                    borderRight: i < 3 ? `1px solid ${T.borderMid}` : "none"
-                  }}>
-                    <div style={{ fontSize:26, fontWeight:700, color, lineHeight:1 }}>{value}</div>
-                    <div style={{ fontSize:11, fontWeight:600, color:T.text, marginTop:3 }}>{label}</div>
-                    <div style={{ fontSize:10, color:T.textMuted, marginTop:1 }}>{sub}</div>
-                  </div>
-                ))}
-              </Card>
-
-              {/* Unassigned warning */}
-              {result.unassigned > 0 && (
-                <div style={{ background:T.errorBg, border:`1px solid ${T.error}44`,
-                  borderRadius:T.radiusSm, padding:"10px 14px", fontSize:12, color:T.error }}>
+              {/* Unassigned warning — only for main plan */}
+              {!displayIsAlt && result.unassigned > 0 && (
+                <div
+                  style={{
+                    background: theme.errorBg,
+                    border: `1px solid ${theme.error}44`,
+                    borderRadius: theme.radius.md,
+                    padding: "10px 14px",
+                    fontSize: 12,
+                    color: theme.error,
+                  }}
+                >
                   <strong>{result.unassigned} containers</strong> could not be assigned —
                   insufficient capacity on scheduled voyages.
                 </div>
               )}
 
               {/* Timeline */}
-              <Card>
-                <div style={{ fontSize:12, fontWeight:700, color:T.text, marginBottom:12 }}>
+              <div
+                style={{
+                  background: theme.bgSecondary,
+                  borderRadius: theme.radius.lg,
+                  border: `1px solid ${theme.border}`,
+                  padding: "18px 20px",
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 700,
+                    color: theme.textPrimary,
+                    marginBottom: 12,
+                  }}
+                >
                   Voyage timeline
                 </div>
-                <PlanTimeline assignments={result.assignments} dueDate={dueDate} />
-              </Card>
+                <PlanTimeline assignments={displayAssignments} dueDate={dueDate} currDate={currDate} />
+              </div>
 
-              {/* Route summary table */}
-              <Card style={{ padding:0, overflow:"hidden" }}>
-                <div style={{ padding:"14px 16px", borderBottom:`1px solid ${T.borderMid}`,
-                  display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                  <span style={{ fontSize:13, fontWeight:700, color:T.text }}>
-                    Assignment breakdown
-                  </span>
-                  <span style={{ fontSize:11, color:T.textMuted }}>
-                    {port(origin)} → {port(destination)} · by {fmtDate(dueDate)}
-                  </span>
-                </div>
-                {/* Column headers */}
-                <div style={{ display:"grid", gridTemplateColumns:"36px 1fr 120px 90px 100px 90px 90px",
-                  padding:"8px 16px", background:T.surfaceAlt,
-                  fontSize:10, fontWeight:700, color:T.textMuted, textTransform:"uppercase", letterSpacing:0.5 }}>
-                  <div>#</div>
-                  <div>Barge / Voyage</div>
-                  <div>Route</div>
-                  <div style={{textAlign:"center"}}>Containers</div>
-                  <div style={{textAlign:"center"}}>Departs</div>
-                  <div style={{textAlign:"center"}}>Arrives</div>
-                  <div style={{textAlign:"right"}}>Load after</div>
-                </div>
-                {result.assignments.map((a, i) => {
-                  const bc = BARGE_COLORS[a.voyage.barge] || "#64748b";
-                  const isLate = a.status === "late";
+              <AssignmentsTable
+                assignments={displayAssignments}
+                origin={origin}
+                destination={destination}
+                dueDate={dueDate}
+              />
 
-                  const rowBg = isLate
-                    ? T.errorBg
-                    : i % 2 === 0
-                    ? T.surface
-                    : T.bg;
-                  return (
-                    <div key={i} style={{ display:"grid",
-                      gridTemplateColumns:"36px 1fr 120px 90px 100px 90px 90px",
-                      padding:"10px 16px", background:rowBg,
-                      borderBottom:`1px solid ${T.borderMid}`, alignItems:"center",
-                      borderLeft:`3px solid ${a.status === "critical" ? T.error : a.status === "warning" ? T.warning : T.success}` }}>
-                      <div style={{ fontSize:11, color:T.textMuted, fontWeight:600 }}>{i+1}</div>
-                      <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                        <span style={{ width:8, height:8, borderRadius:"50%", background:bc, flexShrink:0 }}/>
-                        <div>
-                          <div style={{ fontSize:12, fontWeight:700, color:T.text }}>{a.voyage.barge}</div>
-                          <div style={{ fontSize:10, color:T.textMuted, fontFamily:"monospace" }}>{a.voyage.code}</div>
-                        </div>
-                      </div>
-                      <div style={{ fontSize:11, color:T.textSub }}>
-                        {port(a.voyage.portFrom)} → {port(a.voyage.portTo)}
-                      </div>
-                      <div style={{ textAlign:"center" }}>
-                        <span style={{ fontSize:16, fontWeight:700, color:T.info }}>{a.containersAssigned}</span>
-                        <span style={{ fontSize:10, color:T.textMuted, marginLeft:3 }}>ctrs</span>
-                      </div>
-                      <div style={{ fontSize:11, textAlign:"center", color:T.textSub, fontFamily:"monospace" }}>
-                        {fmtDate(a.voyage.depart)}
-                      </div>
-                      <div style={{ fontSize:11, textAlign:"center", color:T.textSub, fontFamily:"monospace" }}>
-                        {fmtDate(a.voyage.arrive)}
-                      </div>
-                      <div style={{ textAlign:"right" }}>
-                        <StatusPill status={a.status}>{a.teuPctAfter}%</StatusPill>
-                      </div>
-                    </div>
-                  );
-                })}
-              </Card>
-
-              {/* Expanded voyage cards */}
-              <div style={{ fontSize:13, fontWeight:700, color:T.text, marginTop:4 }}>
+              <div
+                style={{
+                  fontSize: 13,
+                  fontWeight: 700,
+                  color: theme.textPrimary,
+                  marginTop: 4,
+                }}
+              >
                 Voyage details
               </div>
-              {result.assignments.map((a, i) => (
+              {displayAssignments.map((a, i) => (
                 <VoyageCard key={i} assignment={a} index={i} />
               ))}
             </div>
           )}
+
+          {/* No-split alternatives */}
+          {showNoSplitAlts && (
+            <div style={{ marginTop: showResults || showTruck || displayIsAlt ? 20 : 0 }}>
+              <NoSplitAlternatives
+                alternatives={noSplitAlts}
+                containerCount={count}
+                selectedIndex={selectedAltIndex}
+                onSelect={setSelectedAltIndex}
+              />
+            </div>
+          )}
+
+          {/* Commit plan button */}
+          {canCommit && (
+            <div style={{ marginTop: 20 }}>
+              <button
+                onClick={handleCommit}
+                style={{
+                  width: "100%",
+                  padding: "12px",
+                  borderRadius: theme.radius.md,
+                  background: theme.success,
+                  color: "#fff",
+                  border: "none",
+                  fontSize: 14,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  transition: "background 0.15s",
+                }}
+              >
+                ✓ Commit {displayIsAlt ? "selected alternative" : "this plan"}
+              </button>
+              <p
+                style={{
+                  fontSize: 11,
+                  color: theme.textMuted,
+                  margin: "6px 0 0",
+                  textAlign: "center",
+                }}
+              >
+                {displayIsAlt
+                  ? "Commits the selected no-split alternative — updates voyage capacity for this session."
+                  : "Committing updates voyage capacity for this session and saves the plan for CSV export."}
+              </p>
+            </div>
+          )}
         </div>
       </div>
+
+      {/* Committed plans panel — full width below the grid */}
+      <CommittedPlansPanel
+        plans={committedPlans}
+        onDownload={handleDownloadCsv}
+        onClear={handleClearPlans}
+      />
     </div>
   );
 }
