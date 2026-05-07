@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { theme } from "../../data/theme";
 import { BARGE_COLORS } from "../../data/constants";
+import { voyageWeightUsed as voyageWeightUsedForBar } from "../../utils/routePlanner";
 import { port, fmtDT, fmtDate } from "./format";
 import StatusPill from "./StatusPill";
 import TeuBar from "./TeuBar";
@@ -141,9 +142,21 @@ export default function VoyageCard({ assignment, index }) {
         </div>
       </div>
 
-      {/* TEU bar always visible */}
-      <div style={{ padding: "0 16px 10px" }}>
+      {/* Capacity bars always visible */}
+      <div style={{ padding: "0 16px 10px", display: "flex", flexDirection: "column", gap: 6 }}>
+        {/* TEU bar */}
         <TeuBar used={v.teuUsed} max={v.bargeMaxTeu} extra={teuAssigned} />
+
+        {/* Weight bar — only shown when weight data is available */}
+        {v.bargeMaxWeight > 0 && weightAssigned > 0 && (
+          <TeuBar
+            used={voyageWeightUsedForBar(v)}
+            max={v.bargeMaxWeight}
+            extra={weightAssigned}
+            unit="t"
+            fmtVal={(kg) => (kg >= 1000 ? `${(kg / 1000).toFixed(0)}` : `${kg}`)}
+          />
+        )}
       </div>
 
       {/* Expanded detail */}

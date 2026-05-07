@@ -8,6 +8,7 @@ import {
   UNIT_TEU,
   UNIT_WEIGHT_KG,
   voyageWeightUsed,
+  pct,
 } from "../utils/routePlanner";
 import trucksData from "../data/trucksData.json";
 import PlanInputs from "../components/routePlanner/PlanInputs";
@@ -38,6 +39,42 @@ function generateTruckFallback(currDate, dueDate) {
   const m = Math.floor(Math.random() * 60);
   const timeStr = String(h).padStart(2, "0") + String(m).padStart(2, "0");
   return { ...truck, transportDate: dateStr, transportTime: timeStr };
+}
+
+/**
+ * Convert a no-split alternative into planRoute-style assignment objects so
+ * the same result components (VoyageCard, AssignmentsTable, etc.) can render it.
+ */
+function buildAltAssignments(alt, containerCount, containerType, weightPerCntr) {
+  const teuPerCntr = UNIT_TEU[containerType] || 2;
+  return alt.voyages.map((v) => {
+    const teuAssigned = containerCount * teuPerCntr;
+    const teuAfter = v.teuUsed + teuAssigned;
+    const teuPctAfter = pct(teuAfter, v.bargeMaxTeu);
+    const weightAssigned = containerCount * (weightPerCntr || 0);
+    const wUsed = voyageWeightUsed(v);
+    const weightAfter = wUsed + weightAssigned;
+    const weightPctAfter =
+      v.bargeMaxWeight && weightPerCntr ? pct(weightAfter, v.bargeMaxWeight) : 0;
+    return {
+      voyage: v,
+      containersAssigned: containerCount,
+      teuAssigned,
+      teuAfter,
+      teuPctAfter,
+      weightAssigned,
+      weightAfter,
+      weightPctAfter,
+      isLate: alt.isLate,
+      status: alt.isLate
+        ? "late"
+        : teuPctAfter >= 95 || weightPctAfter >= 95
+        ? "critical"
+        : teuPctAfter >= 80 || weightPctAfter >= 80
+        ? "warning"
+        : "ok",
+    };
+  });
 }
 
 /** Build CSV string from an array of committed plan objects. */
@@ -148,6 +185,8 @@ export default function RoutePlanner({ data }) {
   const [result, setResult] = useState(null);
   const [noSplitAlts, setNoSplitAlts] = useState(null);
   const [hasPlanned, setHasPlanned] = useState(false);
+  // null = main plan active; number = index into noSplitAlts of the chosen alt
+  const [selectedAltIndex, setSelectedAltIndex] = useState(null);
 
   // Session-only: tracks TEU + weight added to voyages by committed plans.
   // Resets on page reload — keeping plannerData baseline clean.
@@ -200,6 +239,13 @@ export default function RoutePlanner({ data }) {
     [routeVoyages]
   );
 
+  // When an alternative is selected, compute its planRoute-style assignments
+  // so the same result components (timeline, table, voyage cards) can render it.
+  const altAssignments = useMemo(() => {
+    if (selectedAltIndex === null || !noSplitAlts || !noSplitAlts[selectedAltIndex]) return null;
+    return buildAltAssignments(noSplitAlts[selectedAltIndex], count, unitType, weightPerCntr);
+  }, [selectedAltIndex, noSplitAlts, count, unitType, weightPerCntr]);
+
   function handlePlan() {
     const r = planRoute({
       voyages: adjustedVoyages,
@@ -218,6 +264,7 @@ export default function RoutePlanner({ data }) {
     }
 
     setResult(r);
+    setSelectedAltIndex(null);
 
     const alts = findNoSplitAlternatives({
       voyages: adjustedVoyages,
@@ -248,19 +295,22 @@ export default function RoutePlanner({ data }) {
     if ("dueDate" in patch) setDueDate(patch.dueDate);
     setResult(null);
     setNoSplitAlts(null);
+    setSelectedAltIndex(null);
   }
 
   function handleCommit() {
-    if (!result) return;
-    const hasAssignments = result.assignments && result.assignments.length > 0;
-    const hasTruck = Boolean(result.truckFallback);
-    if (!hasAssignments && !hasTruck) return;
+    // Determine which assignments to commit: selected alternative or main plan
+    const isAlt = altAssignments !== null;
+    const assignments = isAlt ? altAssignments : (result?.assignments ?? []);
+    const truckFallback = isAlt ? null : (result?.truckFallback ?? null);
+
+    if (!assignments.length && !truckFallback) return;
 
     // Update session-level capacity so subsequent plans reflect these containers
-    if (hasAssignments) {
+    if (assignments.length) {
       setCommittedCapacity((prev) => {
         const next = { ...prev };
-        for (const a of result.assignments) {
+        for (const a of assignments) {
           const code = a.voyage.code;
           const existing = next[code] || { addedTeu: 0, addedWeight: 0 };
           next[code] = {
@@ -286,8 +336,9 @@ export default function RoutePlanner({ data }) {
         currDate,
         dueDate,
       },
-      assignments: result.assignments,
-      truckFallback: result.truckFallback || null,
+      assignments,
+      truckFallback,
+      isAlternative: isAlt,
     };
 
     const updatedPlans = [...committedPlans, plan];
@@ -301,6 +352,7 @@ export default function RoutePlanner({ data }) {
     // Clear current result so the user can plan again with updated capacity
     setResult(null);
     setNoSplitAlts(null);
+    setSelectedAltIndex(null);
     setHasPlanned(false);
   }
 
@@ -339,7 +391,7 @@ export default function RoutePlanner({ data }) {
   const showTruck = hasPlanned && result?.truckFallback;
 
   // Show no-split alts when the main plan splits across >1 voyage,
-  // or when there's a truck fallback but alts exist on barge
+  // or when there's a truck fallback but barge alts exist
   const showNoSplitAlts =
     noSplitAlts &&
     noSplitAlts.length > 0 &&
@@ -347,8 +399,12 @@ export default function RoutePlanner({ data }) {
 
   const canCommit =
     hasPlanned &&
-    result &&
-    (result.assignments.length > 0 || result.truckFallback);
+    (altAssignments !== null ||
+      (result && (result.assignments.length > 0 || result.truckFallback)));
+
+  // Assignments to actually render (alt takes precedence when selected)
+  const displayAssignments = altAssignments ?? result?.assignments ?? [];
+  const displayIsAlt = altAssignments !== null;
 
   return (
     <div style={{ minHeight: "100vh" }}>
@@ -419,16 +475,53 @@ export default function RoutePlanner({ data }) {
             </div>
           )}
 
-          {showResults && (
+          {(showResults || displayIsAlt) && (
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              <PlanSummaryBanner
-                assignedTotal={assignedTotal}
-                result={result}
-                count={count}
-              />
+              {/* Alternative-active banner */}
+              {displayIsAlt && (
+                <div
+                  style={{
+                    background: theme.infoBg,
+                    border: `1.5px solid ${theme.info}`,
+                    borderRadius: theme.radius.md,
+                    padding: "10px 14px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                  }}
+                >
+                  <span style={{ fontSize: 13, color: theme.info, fontWeight: 700, flex: 1 }}>
+                    Showing selected alternative —{" "}
+                    {noSplitAlts[selectedAltIndex].voyages.length === 1 ? "1 direct voyage" : "2-leg journey via Rotterdam"} for all {count} containers
+                  </span>
+                  <button
+                    onClick={() => setSelectedAltIndex(null)}
+                    style={{
+                      padding: "4px 12px",
+                      borderRadius: theme.radius.sm,
+                      border: `1px solid ${theme.info}`,
+                      background: "transparent",
+                      color: theme.info,
+                      fontSize: 11,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                  >
+                    ↩ Back to suggested plan
+                  </button>
+                </div>
+              )}
 
-              {/* Unassigned warning */}
-              {result.unassigned > 0 && (
+              {!displayIsAlt && (
+                <PlanSummaryBanner
+                  assignedTotal={assignedTotal}
+                  result={result}
+                  count={count}
+                />
+              )}
+
+              {/* Unassigned warning — only for main plan */}
+              {!displayIsAlt && result.unassigned > 0 && (
                 <div
                   style={{
                     background: theme.errorBg,
@@ -463,11 +556,11 @@ export default function RoutePlanner({ data }) {
                 >
                   Voyage timeline
                 </div>
-                <PlanTimeline assignments={result.assignments} dueDate={dueDate} currDate={currDate} />
+                <PlanTimeline assignments={displayAssignments} dueDate={dueDate} currDate={currDate} />
               </div>
 
               <AssignmentsTable
-                assignments={result.assignments}
+                assignments={displayAssignments}
                 origin={origin}
                 destination={destination}
                 dueDate={dueDate}
@@ -483,7 +576,7 @@ export default function RoutePlanner({ data }) {
               >
                 Voyage details
               </div>
-              {result.assignments.map((a, i) => (
+              {displayAssignments.map((a, i) => (
                 <VoyageCard key={i} assignment={a} index={i} />
               ))}
             </div>
@@ -491,10 +584,12 @@ export default function RoutePlanner({ data }) {
 
           {/* No-split alternatives */}
           {showNoSplitAlts && (
-            <div style={{ marginTop: showResults || showTruck ? 20 : 0 }}>
+            <div style={{ marginTop: showResults || showTruck || displayIsAlt ? 20 : 0 }}>
               <NoSplitAlternatives
                 alternatives={noSplitAlts}
                 containerCount={count}
+                selectedIndex={selectedAltIndex}
+                onSelect={setSelectedAltIndex}
               />
             </div>
           )}
@@ -517,7 +612,7 @@ export default function RoutePlanner({ data }) {
                   transition: "background 0.15s",
                 }}
               >
-                ✓ Commit this plan
+                ✓ Commit {displayIsAlt ? "selected alternative" : "this plan"}
               </button>
               <p
                 style={{
@@ -527,7 +622,9 @@ export default function RoutePlanner({ data }) {
                   textAlign: "center",
                 }}
               >
-                Committing updates voyage capacity for this session and saves the plan for CSV export.
+                {displayIsAlt
+                  ? "Commits the selected no-split alternative — updates voyage capacity for this session."
+                  : "Committing updates voyage capacity for this session and saves the plan for CSV export."}
               </p>
             </div>
           )}

@@ -1,7 +1,19 @@
 import { theme } from "../../data/theme";
 import { pct } from "../../utils/routePlanner";
 
-export default function TeuBar({ used, max, extra = 0, showLabel = true }) {
+/**
+ * Generic horizontal capacity bar.
+ *
+ * Props:
+ *   used       — already-used amount
+ *   max        — maximum capacity
+ *   extra      — planned addition (highlighted in status colour)
+ *   showLabel  — whether to render the text labels below (default true)
+ *   unit       — unit string appended to the right label (default "TEU")
+ *   fmtVal     — optional (value: number) => string  formatter for labels
+ */
+export default function TeuBar({ used, max, extra = 0, showLabel = true, unit = "TEU", fmtVal }) {
+  const fmt = fmtVal || ((v) => String(v));
   const usedPct  = Math.min(100, pct(used, max));
   const extraPct = Math.min(100 - usedPct, pct(extra, max));
   const totalPct = usedPct + extraPct;
@@ -48,7 +60,7 @@ export default function TeuBar({ used, max, extra = 0, showLabel = true }) {
       {showLabel && (
         <div style={{ display: "flex", justifyContent: "space-between", marginTop: 3 }}>
           <span style={{ fontSize: 10, color: theme.textMuted }}>
-            {used} used {extra > 0 ? `+ ${extra} planned` : ""}
+            {fmt(used)} used{extra > 0 ? ` + ${fmt(extra)} planned` : ""}
           </span>
           <span
             style={{
@@ -57,7 +69,7 @@ export default function TeuBar({ used, max, extra = 0, showLabel = true }) {
               fontWeight: 600,
             }}
           >
-            {totalPct}% / {max} TEU
+            {totalPct}% / {fmt(max)} {unit}
           </span>
         </div>
       )}
