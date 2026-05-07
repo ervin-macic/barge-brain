@@ -82,7 +82,6 @@ export default function App() {
               { id: "barge", label: "Barge View" },
               { id: "weekly", label: "Weekly Barge View" },
               { id: "capacity", label: "Transport Capacity" },
-              { id: "scatter", label: "Scatter Plot" },
               { id: "planner", label: "Route Planner" },
             ].map((v) => (
             <button

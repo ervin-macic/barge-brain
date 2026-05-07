@@ -21,6 +21,7 @@
     "eject": "react-scripts eject",
     "data:import": "node scripts/xlsx-to-sqlite.mjs",
     "data:build-raw": "node scripts/build-raw-data.mjs",
+    "data:build-containers": "node scripts/build-containers-raw.mjs",
     "data:validate": "node scripts/validate-raw-legacy.mjs",
     "seed:server-db": "node scripts/seed-barge-brain-sqlite.mjs"
   },

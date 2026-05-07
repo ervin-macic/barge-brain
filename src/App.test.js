@@ -11,6 +11,5 @@ test('renders navigation buttons for each view', () => {
   expect(screen.getByRole('button', { name: /^barge view$/i })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: /^weekly barge view$/i })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: /^transport capacity$/i })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: /^scatter plot$/i })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: /^route planner$/i })).toBeInTheDocument();
 });
