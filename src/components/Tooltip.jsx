@@ -56,33 +56,6 @@ function getStatusColor(status) {
   }
 }
 
-function LegendChip({ color, label }) {
-  return (
-    <div
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 6,
-        marginRight: 10,
-        marginBottom: 6,
-        fontSize: 11,
-        color: theme.textSecondary,
-      }}
-    >
-      <span
-        style={{
-          width: 8,
-          height: 8,
-          borderRadius: "50%",
-          background: color,
-          flexShrink: 0,
-        }}
-      />
-      <span>{label}</span>
-    </div>
-  );
-}
-
 export default function Tooltip({
   leg,
   x,
