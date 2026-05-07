@@ -15,9 +15,51 @@ export const UNIT_TEU = {
   "45HC": 2,
 };
 
+/** Ordered list of container unit type keys (for dropdowns). */
+export const UNIT_TYPES = ["20DV", "20HC", "40DV", "40HC", "40RH", "45HC"];
+
+/** Human-readable label for each unit type key. */
+export const UNIT_LABELS = {
+  "20DV": "20DV",
+  "20HC": "20HC",
+  "40DV": "40DV",
+  "40HC": "40HC",
+  "40RH": "40RH",
+  "45HC": "45HC",
+};
+
 /** Integer utilisation percentage (0 if max is falsy). */
 export function pct(used, max) {
   return max ? Math.round((used / max) * 100) : 0;
+}
+
+/**
+ * Returns all voyages that serve the requested corridor and depart on or after
+ * currDate. Does NOT filter by remaining capacity — call-sites that need only
+ * capacity-positive voyages should filter the returned list themselves.
+ *
+ * @param {object} params
+ * @param {Array}  params.voyages      - Full voyage list
+ * @param {string} params.origin       - Port code
+ * @param {string} params.destination  - Port code
+ * @param {string} params.currDate     - ISO date string
+ * @returns {Array} filtered voyages
+ */
+export function getEligibleVoyages({ voyages, origin, destination, currDate }) {
+  const now = new Date(currDate);
+  return voyages.filter((v) => {
+    if (!v.depart || !v.arrive) return false;
+    if (new Date(v.depart) < now) return false;
+
+    const direct = v.portFrom === origin && v.portTo === destination;
+    const viaHub =
+      origin !== "ROTTE" &&
+      destination !== "ROTTE" &&
+      ((v.portFrom === origin && v.portTo === "ROTTE") ||
+        (v.portFrom === "ROTTE" && v.portTo === destination));
+
+    return direct || viaHub;
+  });
 }
 
 /**
@@ -52,24 +94,11 @@ export function planRoute({
   currDate,
   dueDate,
 }) {
-  const now = new Date(currDate);
   const due = new Date(dueDate);
   const teuPerCntr = UNIT_TEU[containerType] || 2;
 
   // 1. Keep voyages that serve the requested corridor (direct or via Rotterdam hub)
-  const eligible = voyages.filter((v) => {
-    if (!v.depart || !v.arrive) return false;
-    if (new Date(v.depart) < now) return false;
-
-    const direct = v.portFrom === origin && v.portTo === destination;
-    const viaHub =
-      origin !== "ROTTE" &&
-      destination !== "ROTTE" &&
-      ((v.portFrom === origin && v.portTo === "ROTTE") ||
-        (v.portFrom === "ROTTE" && v.portTo === destination));
-
-    return direct || viaHub;
-  });
+  const eligible = getEligibleVoyages({ voyages, origin, destination, currDate });
 
   if (eligible.length === 0) {
     return {

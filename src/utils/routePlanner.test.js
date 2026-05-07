@@ -1,4 +1,4 @@
-import { planRoute, UNIT_TEU, pct } from "./routePlanner";
+import { planRoute, getEligibleVoyages, UNIT_TEU, pct } from "./routePlanner";
 
 // ── UNIT_TEU ──────────────────────────────────────────────────────────────────
 
@@ -322,6 +322,49 @@ describe("planRoute – partial assignment", () => {
     });
     expect(result.unassigned).toBe(3);
     expect(result.assignments[0].containersAssigned).toBe(2);
+  });
+});
+
+// ── getEligibleVoyages ────────────────────────────────────────────────────────
+
+describe("getEligibleVoyages", () => {
+  test("includes direct and hub legs, excludes unrelated corridors", () => {
+    const voyages = [
+      makeVoyage({ code: "DIRECT", portFrom: "VEGHE", portTo: "ROTTE" }),
+      makeVoyage({ code: "HUB_OUT", portFrom: "VEGHE", portTo: "ROTTE", depart: "2026-03-02T08:00:00", arrive: "2026-03-02T18:00:00" }),
+      makeVoyage({ code: "HUB_IN", portFrom: "ROTTE", portTo: "OSS", depart: "2026-03-02T08:00:00", arrive: "2026-03-02T18:00:00" }),
+      makeVoyage({ code: "SKIP", portFrom: "TIEL", portTo: "KAT" }),
+    ];
+    const eligible = getEligibleVoyages({ voyages, origin: "VEGHE", destination: "OSS", currDate: NOW });
+    const codes = eligible.map((v) => v.code);
+    expect(codes).toContain("DIRECT");
+    expect(codes).toContain("HUB_OUT");
+    expect(codes).toContain("HUB_IN");
+    expect(codes).not.toContain("SKIP");
+  });
+
+  test("excludes voyages departing before currDate", () => {
+    const voyages = [
+      makeVoyage({ code: "OLD", depart: "2026-02-01T08:00:00", arrive: "2026-02-01T18:00:00" }),
+      makeVoyage({ code: "NEW", depart: "2026-03-01T08:00:00", arrive: "2026-03-01T18:00:00" }),
+    ];
+    const eligible = getEligibleVoyages({ voyages, origin: "VEGHE", destination: "ROTTE", currDate: NOW });
+    const codes = eligible.map((v) => v.code);
+    expect(codes).not.toContain("OLD");
+    expect(codes).toContain("NEW");
+  });
+
+  test("excludes voyages missing depart or arrive", () => {
+    const voyages = [
+      makeVoyage({ code: "NO_DEP", depart: null }),
+      makeVoyage({ code: "NO_ARR", arrive: null }),
+      makeVoyage({ code: "OK" }),
+    ];
+    const eligible = getEligibleVoyages({ voyages, origin: "VEGHE", destination: "ROTTE", currDate: NOW });
+    const codes = eligible.map((v) => v.code);
+    expect(codes).not.toContain("NO_DEP");
+    expect(codes).not.toContain("NO_ARR");
+    expect(codes).toContain("OK");
   });
 });
 
