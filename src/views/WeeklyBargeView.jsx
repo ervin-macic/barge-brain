@@ -8,7 +8,6 @@ import FiltersSidebar from "../components/FiltersSidebar";
 import SummaryBar from "../components/SummaryBar";
 
 const ROW_H = 52;
-const MS_PER_DAY = 86400000;
 const NODE_RADIUS = 9;
 const PROJECTION_DAYS = 7;
 
@@ -120,32 +119,6 @@ function getPortDisplayName(portCode) {
   return PORT_LABELS[portCode] || portCode || "—";
 }
 
-function buildBargeRotation(bLegs) {
-  const sorted = [...bLegs].sort(
-    (a, b) => new Date(a.depart) - new Date(b.depart)
-  );
-  if (sorted.length === 0) return null;
-
-  const withTeu = sorted.filter((l) => l.teuPct != null);
-  const utilization =
-    withTeu.length > 0
-      ? withTeu.reduce((a, l) => a + l.teuPct, 0) / withTeu.length
-      : null;
-
-  const bargeStatus =
-    getDisplayStatus(sorted[sorted.length - 1]) === "critical"
-      ? "Late"
-      : sorted.some((l) => getDisplayStatus(l) !== "ok")
-      ? "At risk"
-      : "On time";
-
-  return {
-    legs: sorted,
-    utilization,
-    bargeStatus,
-    totalTeu: sorted.reduce((a, l) => a + (l.teu || 0), 0),
-  };
-}
 
 function getTodayJourneyStatus(bLegs) {
   const todayStart = startOfLocalDay(TODAY).getTime();
