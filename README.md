@@ -43,7 +43,7 @@ The repo is structured for two Railway services from the same Git repository.
 **Frontend environment variable (build time):**
 
 ```
-REACT_APP_API_URL=https://<your-backend>.up.railway.app
+REACT_APP_API_URL=https://<backend>.up.railway.app
 ```
 
 CRA bakes this in at build time. Without it, the app uses the bundled static dataset (fine for local development and tests).
@@ -52,7 +52,7 @@ CRA bakes this in at build time. Without it, the app uses the bundled static dat
 
 ```
 DATABASE_PATH=/data/barge-brain.sqlite    # must match the volume mount path
-FRONTEND_URL=https://<your-frontend>.up.railway.app
+FRONTEND_URL=https://<frontend>.up.railway.app
 ```
 
 Attach a Railway volume to the backend service and mount it at `/data`. On first boot the server copies the bundled seed database (`server/data/barge-brain.sqlite`) onto the empty volume automatically.
