@@ -4,6 +4,7 @@ import { theme } from "./data/theme";
 import BargeView from "./views/BargeView";
 import WeeklyBargeView from "./views/WeeklyBargeView";
 import CapacityView from "./views/CapacityView";
+import ContainerView from "./views/ContainerView";
 import ScatterPlotView from "./views/ScatterPlotView";
 import RoutePlanner from './views/RoutePlanner';
 import plannerData from './data/plannerData.json';
@@ -82,6 +83,7 @@ export default function App() {
               { id: "barge", label: "Barge View" },
               { id: "weekly", label: "Weekly Barge View" },
               { id: "capacity", label: "Transport Capacity" },
+              { id: "container", label: "Container View" },
               { id: "planner", label: "Route Planner" },
             ].map((v) => (
             <button
@@ -114,6 +116,7 @@ export default function App() {
             {view === "barge" && <BargeView legs={legs} />}
             {view === "weekly" && <WeeklyBargeView legs={legs} />}
             {view === "capacity" && <CapacityView legs={legs} />}
+	    {view === "container" && <ContainerView />}
             {view === "scatter" && <ScatterPlotView legs={legs} />}
             {view === "planner" && <RoutePlanner data={plannerData} />}
         </div>
