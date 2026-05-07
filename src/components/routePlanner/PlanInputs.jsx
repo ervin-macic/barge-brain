@@ -68,18 +68,21 @@ function Select({ style, children, ...props }) {
  * Left-side planning form card.
  *
  * Props:
- *   value    — { origin, destination, count, unitType, currDate, dueDate }
+ *   value    — { origin, destination, count, unitType, weightPerCntr, importExport, currDate, dueDate }
  *   onChange — (patch: Partial<value>) => void  (caller also clears result)
  *   ports    — string[]
- *   summary  — { teuNeeded, voyageCount, totalAvailTeu }
+ *   summary  — { teuNeeded, weightNeeded, voyageCount, totalAvailTeu, totalAvailWeight }
  *   canPlan  — boolean
  *   onPlan   — () => void
  */
 export default function PlanInputs({ value, onChange, ports, summary, canPlan, onPlan }) {
-  const { origin, destination, count, unitType, currDate, dueDate } = value;
-  const { teuNeeded, voyageCount, totalAvailTeu } = summary;
+  const { origin, destination, count, unitType, weightPerCntr, importExport, currDate, dueDate } = value;
+  const { teuNeeded, weightNeeded, voyageCount, totalAvailTeu, totalAvailWeight } = summary;
 
   const field = (patch) => onChange(patch);
+
+  const fmtWeight = (kg) =>
+    kg >= 1000 ? `${(kg / 1000).toFixed(1)} t` : `${Math.round(kg)} kg`;
 
   return (
     <div
@@ -92,6 +95,46 @@ export default function PlanInputs({ value, onChange, ports, summary, canPlan, o
     >
       <div style={{ fontSize: 13, fontWeight: 700, color: theme.textPrimary, marginBottom: 16 }}>
         Planning inputs
+      </div>
+
+      {/* Import / Export */}
+      <div style={{ marginBottom: 14 }}>
+        <Label>Container flow</Label>
+        <div style={{ display: "flex", gap: 8 }}>
+          {[
+            { v: "I", label: "Import" },
+            { v: "E", label: "Export" },
+          ].map(({ v, label }) => (
+            <button
+              key={v}
+              onClick={() => field({ importExport: v })}
+              style={{
+                flex: 1,
+                padding: "7px 0",
+                borderRadius: theme.radius.md,
+                border: `1.5px solid ${importExport === v ? theme.info : theme.borderMuted}`,
+                background: importExport === v ? theme.infoBg : theme.bgPrimary,
+                color: importExport === v ? theme.info : theme.textSecondary,
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {importExport === "E" && (
+          <p
+            style={{
+              fontSize: 10,
+              color: theme.warning,
+              margin: "5px 0 0",
+            }}
+          >
+            Exports cannot be late — only on-time voyages will be used.
+          </p>
+        )}
       </div>
 
       <div style={{ marginBottom: 14 }}>
@@ -135,6 +178,18 @@ export default function PlanInputs({ value, onChange, ports, summary, canPlan, o
       </div>
 
       <div style={{ marginBottom: 14 }}>
+        <Label>Weight per container (kg)</Label>
+        <Input
+          type="number"
+          min={1000}
+          max={35000}
+          step={500}
+          value={weightPerCntr}
+          onChange={(e) => field({ weightPerCntr: parseInt(e.target.value) || 0 })}
+        />
+      </div>
+
+      <div style={{ marginBottom: 14 }}>
         <Label>Current date (planning starts from)</Label>
         <Input
           type="date"
@@ -167,16 +222,38 @@ export default function PlanInputs({ value, onChange, ports, summary, canPlan, o
         }}
       >
         {[
-          ["TEU required",        `${teuNeeded} TEU`],
-          ["Matching voyages",    `${voyageCount}`],
-          ["Available TEU (total)", `${Math.round(totalAvailTeu)} TEU`],
-        ].map(([label, val], i) => (
+          {
+            label: "TEU required",
+            val: `${teuNeeded} TEU`,
+            color: theme.textPrimary,
+          },
+          {
+            label: "Weight required",
+            val: fmtWeight(weightNeeded),
+            color: theme.textPrimary,
+          },
+          {
+            label: "Matching voyages",
+            val: `${voyageCount}`,
+            color: theme.textPrimary,
+          },
+          {
+            label: "Available TEU (total)",
+            val: `${Math.round(totalAvailTeu)} TEU`,
+            color: totalAvailTeu >= teuNeeded ? theme.success : theme.error,
+          },
+          {
+            label: "Available weight (total)",
+            val: fmtWeight(totalAvailWeight),
+            color: totalAvailWeight >= weightNeeded ? theme.success : theme.error,
+          },
+        ].map(({ label, val, color }, i, arr) => (
           <div
             key={label}
             style={{
               display: "flex",
               justifyContent: "space-between",
-              marginBottom: i < 2 ? 4 : 0,
+              marginBottom: i < arr.length - 1 ? 4 : 0,
             }}
           >
             <span style={{ color: theme.textSecondary }}>{label}</span>
@@ -184,12 +261,7 @@ export default function PlanInputs({ value, onChange, ports, summary, canPlan, o
               style={{
                 fontWeight: 700,
                 fontFamily: theme.fontMono,
-                color:
-                  label === "Available TEU (total)"
-                    ? totalAvailTeu >= teuNeeded
-                      ? theme.success
-                      : theme.error
-                    : theme.textPrimary,
+                color,
               }}
             >
               {val}

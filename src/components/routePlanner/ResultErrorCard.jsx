@@ -5,7 +5,7 @@ import { port, fmtDate } from "./format";
  * Shown when the planner finds no results.
  *
  * Props:
- *   error       — "no_voyages" | "no_capacity"
+ *   error       — "no_voyages" | "no_capacity" | "export_late"
  *   origin      — port code
  *   destination — port code
  *   dueDate     — ISO date string
@@ -52,6 +52,30 @@ export default function ResultErrorCard({ error, origin, destination, dueDate })
         <div style={{ color: theme.textSecondary, fontSize: 12, marginTop: 4 }}>
           Voyages exist on this route but are all at or near full capacity. Try a later due date
           to include more voyages.
+        </div>
+      </div>
+    );
+  }
+
+  if (error === "export_late") {
+    return (
+      <div
+        style={{
+          background: theme.bgSecondary,
+          borderRadius: theme.radius.lg,
+          border: `1px solid ${theme.error}`,
+          padding: 40,
+          textAlign: "center",
+        }}
+      >
+        <div style={{ fontSize: 24, marginBottom: 8 }}>🚫</div>
+        <div style={{ fontWeight: 700, color: theme.error, fontSize: 14 }}>
+          No on-time barge voyages for export
+        </div>
+        <div style={{ color: theme.textSecondary, fontSize: 12, marginTop: 4 }}>
+          All available barge voyages on {port(origin)} → {port(destination)} arrive after the
+          due date of {fmtDate(dueDate)}. Exports cannot be shipped late — a truck alternative
+          is shown below.
         </div>
       </div>
     );

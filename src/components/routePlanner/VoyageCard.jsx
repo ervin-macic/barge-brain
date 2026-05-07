@@ -6,7 +6,20 @@ import StatusPill from "./StatusPill";
 import TeuBar from "./TeuBar";
 
 export default function VoyageCard({ assignment, index }) {
-  const { voyage: v, containersAssigned, teuAssigned, teuAfter, teuPctAfter, status } = assignment;
+  const {
+    voyage: v,
+    containersAssigned,
+    teuAssigned,
+    teuAfter,
+    teuPctAfter,
+    weightAssigned,
+    weightAfter,
+    weightPctAfter,
+    status,
+  } = assignment;
+
+  const fmtWeight = (kg) =>
+    kg != null && kg > 0 ? (kg >= 1000 ? `${(kg / 1000).toFixed(1)} t` : `${Math.round(kg)} kg`) : null;
   const bc = BARGE_COLORS[v.barge] || theme.textSecondary;
   const [open, setOpen] = useState(false);
   const isLate = status === "late";
@@ -193,13 +206,13 @@ export default function VoyageCard({ assignment, index }) {
                 marginBottom: 8,
               }}
             >
-              Capacity after assignment
+              TEU capacity
             </div>
             {[
               ["Currently used",  `${v.teuUsed} TEU`],
               ["Your containers", `+${teuAssigned} TEU (${containersAssigned} × ${teuAssigned / containersAssigned})`],
               ["Total after",     `${teuAfter} / ${v.bargeMaxTeu} TEU`],
-              ["Remaining space", `${v.bargeMaxTeu - teuAfter} TEU`],
+              ["Remaining",       `${v.bargeMaxTeu - teuAfter} TEU`],
             ].map(([l, val]) => (
               <div
                 key={l}
@@ -216,6 +229,44 @@ export default function VoyageCard({ assignment, index }) {
               </div>
             ))}
           </div>
+
+          {/* Weight capacity after assignment */}
+          {v.bargeMaxWeight && fmtWeight(weightAssigned) && (
+            <div>
+              <div
+                style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  color: theme.textMuted,
+                  textTransform: "uppercase",
+                  letterSpacing: 1,
+                  marginBottom: 8,
+                }}
+              >
+                Weight capacity
+              </div>
+              {[
+                ["Max barge weight",  fmtWeight(v.bargeMaxWeight)],
+                ["Your containers",   `+${fmtWeight(weightAssigned)} (${containersAssigned} × ${fmtWeight(weightAssigned / containersAssigned)})`],
+                ["Total after",       `${fmtWeight(weightAfter)} / ${fmtWeight(v.bargeMaxWeight)} (${weightPctAfter}%)`],
+                ["Remaining",         fmtWeight(v.bargeMaxWeight - weightAfter)],
+              ].map(([l, val]) => (
+                <div
+                  key={l}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    fontSize: 12,
+                    padding: "3px 0",
+                    borderBottom: `1px solid ${theme.borderMuted}`,
+                  }}
+                >
+                  <span style={{ color: theme.textSecondary }}>{l}</span>
+                  <span style={{ fontFamily: theme.fontMono, color: theme.textPrimary }}>{val}</span>
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* Terminal stops */}
           {v.stops && v.stops.length > 0 && (
