@@ -1,3 +1,7 @@
+export const ADMIN_USERNAME = "admin";
+export const ADMIN_PASSWORD = process.env.REACT_APP_ADMIN_PASSWORD || "BargeBrain";
+export const AUTH_SESSION_KEY = "barge-brain-authenticated";
+
 export const TODAY = new Date("2026-02-26T12:00:00");
 export const START = new Date("2026-01-29T00:00:00");
 export const END   = new Date("2026-03-03T00:00:00");

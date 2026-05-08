@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRaw } from "./context/RawDataContext";
 import { theme } from "./data/theme";
+import Login from "./components/Login";
+import { AUTH_SESSION_KEY } from "./data/constants";
 import BargeView from "./views/BargeView";
 import WeeklyBargeView from "./views/WeeklyBargeView";
 import CapacityView from "./views/CapacityView";
@@ -11,7 +13,19 @@ import plannerData from './data/plannerData.json';
 export default function App() {
   const raw = useRaw();
   const [view, setView] = useState("barge");
+  const [authenticated, setAuthenticated] = useState(
+    () => sessionStorage.getItem(AUTH_SESSION_KEY) === "true"
+  );
+
+  useEffect(() => {
+    if (authenticated) sessionStorage.setItem(AUTH_SESSION_KEY, "true");
+  }, [authenticated]);
+
   const legs = raw.legs.filter((l) => l.depart);
+
+  if (!authenticated) {
+    return <Login onSuccess={() => setAuthenticated(true)} />;
+  }
 
   return (
     <div
