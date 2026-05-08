@@ -1,19 +1,48 @@
 import { useState } from "react";
 import { theme } from "../data/theme";
-import { ADMIN_USERNAME, ADMIN_PASSWORD } from "../data/constants";
+import { ADMIN_USERNAME, ADMIN_PASSWORD, AUTH_SESSION_KEY } from "../data/constants";
+
+const API_URL = process.env.REACT_APP_API_URL;
 
 export default function Login({ onSuccess }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(false);
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
-    if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
-      setError(null);
-      onSuccess();
-    } else {
-      setError("Incorrect username or password.");
+    setError(null);
+    setLoading(true);
+
+    try {
+      if (API_URL) {
+        // Server-side auth: POST credentials, server issues httpOnly cookie
+        const res = await fetch(`${API_URL}/api/login`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, password }),
+        });
+        if (res.ok) {
+          sessionStorage.setItem(AUTH_SESSION_KEY, "true");
+          onSuccess();
+        } else {
+          setError("Incorrect username or password.");
+        }
+      } else {
+        // Local / static dev fallback: client-side check (no server running)
+        if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
+          sessionStorage.setItem(AUTH_SESSION_KEY, "true");
+          onSuccess();
+        } else {
+          setError("Incorrect username or password.");
+        }
+      }
+    } catch {
+      setError("Could not reach the server. Please try again.");
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -33,7 +62,8 @@ export default function Login({ onSuccess }) {
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
         * { box-sizing: border-box; }
         input:focus { outline: none; box-shadow: 0 0 0 2px ${theme.accent}40; border-color: ${theme.accent} !important; }
-        .login-btn:hover { background: ${theme.accentHover} !important; }
+        .login-btn:hover:not(:disabled) { background: ${theme.accentHover} !important; }
+        .login-btn:disabled { opacity: 0.65; cursor: not-allowed; }
       `}</style>
 
       <div
@@ -176,6 +206,7 @@ export default function Login({ onSuccess }) {
           <button
             type="submit"
             className="login-btn"
+            disabled={loading}
             style={{
               width: "100%",
               padding: "10px 0",
@@ -186,11 +217,11 @@ export default function Login({ onSuccess }) {
               background: theme.accent,
               border: "none",
               borderRadius: theme.radius.md,
-              cursor: "pointer",
+              cursor: loading ? "not-allowed" : "pointer",
               transition: "background 0.15s",
             }}
           >
-            Sign in
+            {loading ? "Signing in…" : "Sign in"}
           </button>
         </form>
       </div>

@@ -1,5 +1,7 @@
+// Used only in static/dev mode (no REACT_APP_API_URL). In production the
+// server verifies credentials; these values never reach the production bundle.
 export const ADMIN_USERNAME = "admin";
-export const ADMIN_PASSWORD = process.env.REACT_APP_ADMIN_PASSWORD || "BargeBrain";
+export const ADMIN_PASSWORD = "BargeBrain";
 export const AUTH_SESSION_KEY = "barge-brain-authenticated";
 
 export const TODAY = new Date("2026-02-26T12:00:00");
