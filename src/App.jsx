@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useRaw } from "./context/RawDataContext";
+import { RawDataProvider, useRaw } from "./context/RawDataContext";
 import { theme } from "./data/theme";
 import Login from "./components/Login";
 import { AUTH_SESSION_KEY } from "./data/constants";
@@ -11,8 +11,6 @@ import RoutePlanner from './views/RoutePlanner';
 import plannerData from './data/plannerData.json';
 
 export default function App() {
-  const raw = useRaw();
-  const [view, setView] = useState("barge");
   const [authenticated, setAuthenticated] = useState(
     () => sessionStorage.getItem(AUTH_SESSION_KEY) === "true"
   );
@@ -21,11 +19,23 @@ export default function App() {
     if (authenticated) sessionStorage.setItem(AUTH_SESSION_KEY, "true");
   }, [authenticated]);
 
-  const legs = raw.legs.filter((l) => l.depart);
-
   if (!authenticated) {
     return <Login onSuccess={() => setAuthenticated(true)} />;
   }
+
+  // Mount the data provider only after login, so /api/raw is requested with
+  // a valid session cookie instead of 401-ing (and reloading) on the login page.
+  return (
+    <RawDataProvider>
+      <Dashboard />
+    </RawDataProvider>
+  );
+}
+
+function Dashboard() {
+  const raw = useRaw();
+  const [view, setView] = useState("barge");
+  const legs = raw.legs.filter((l) => l.depart);
 
   return (
     <div
