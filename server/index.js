@@ -7,8 +7,9 @@
  *                      Default: <server_dir>/data/barge-brain.sqlite
  *                      On Railway: set to the volume mount path, e.g. /data/barge-brain.sqlite
  *                      (attach a volume to this service and mount it at /data).
- *   FRONTEND_URL     – Allowed CORS origin in production,
- *                      e.g. https://your-frontend.up.railway.app
+ *   FRONTEND_URL     – Allowed CORS origin, only needed if the frontend is
+ *                      hosted separately. When ../build exists (single-service
+ *                      deploy), the frontend is served from this server instead.
  *   ADMIN_USERNAME   – Login username (default: admin)
  *   ADMIN_PASSWORD   – Login password (required in production)
  *   JWT_SECRET       – Secret used to sign session tokens (required in production)
@@ -51,7 +52,12 @@ if (DB_PATH !== SEED_PATH && !fs.existsSync(DB_PATH)) {
   console.log(`Seeded volume: ${SEED_PATH} → ${DB_PATH}`);
 }
 
+// The DB is read-only and holds a single small JSON bundle, so read it once at
+// startup and keep the serialized string; no per-request parse/stringify.
 const db = new Database(DB_PATH, { readonly: true });
+const rawRow = db.prepare("SELECT payload FROM raw_bundle WHERE id = 1").get();
+db.close();
+const RAW_PAYLOAD = rawRow ? JSON.stringify(JSON.parse(rawRow.payload)) : null;
 
 // ── Express app ───────────────────────────────────────────────────────────────
 const app = express();
@@ -113,17 +119,18 @@ app.post("/api/logout", (_req, res) => {
 });
 
 app.get("/api/raw", requireAuth, (_req, res) => {
-  try {
-    const row = db.prepare("SELECT payload FROM raw_bundle WHERE id = 1").get();
-    if (!row) {
-      return res.status(404).json({ error: "No data found in database" });
-    }
-    res.json(JSON.parse(row.payload));
-  } catch (err) {
-    console.error("/api/raw error:", err);
-    res.status(500).json({ error: "Internal server error" });
+  if (!RAW_PAYLOAD) {
+    return res.status(404).json({ error: "No data found in database" });
   }
+  res.type("json").send(RAW_PAYLOAD);
 });
+
+// ── Static frontend (single-service deploy) ──────────────────────────────────
+const BUILD_DIR = path.join(__dirname, "..", "build");
+if (fs.existsSync(BUILD_DIR)) {
+  app.use(express.static(BUILD_DIR, { maxAge: "1h" }));
+  app.get("*", (_req, res) => res.sendFile(path.join(BUILD_DIR, "index.html")));
+}
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 app.listen(PORT, () => {

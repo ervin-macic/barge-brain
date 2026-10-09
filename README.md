@@ -33,29 +33,19 @@ npm run build
 
 ## Deployment (Railway)
 
-The repo is structured for two Railway services from the same Git repository.
+The app deploys as a **single Railway service** from the repo root (`railway.json`): the build compiles the React app, and the Express server (`server/index.js`) serves both `build/` and the `/api/*` routes from the same origin. App sleeping is enabled, so the container stops after ~10 minutes without traffic and wakes on the next request (first load after idle takes a few seconds).
 
-| Service | Root directory | railway.json |
-|---------|----------------|--------------|
-| Frontend | `.` (repo root) | `railway.json` |
-| Backend | `server/` | `server/railway.json` |
-
-**Frontend environment variable (build time):**
+**Environment variables:**
 
 ```
-REACT_APP_API_URL=https://<backend>.up.railway.app
+REACT_APP_API_URL=https://${{RAILWAY_PUBLIC_DOMAIN}}   # baked in at build time
+ADMIN_PASSWORD=...
+JWT_SECRET=...
 ```
 
-CRA bakes this in at build time. Without it, the app uses the bundled static dataset (fine for local development and tests).
+Without `REACT_APP_API_URL`, the frontend uses the bundled static dataset (fine for local development and tests).
 
-**Backend environment variables:**
-
-```
-DATABASE_PATH=/data/barge-brain.sqlite    # must match the volume mount path
-FRONTEND_URL=https://<frontend>.up.railway.app
-```
-
-Attach a Railway volume to the backend service and mount it at `/data`. On first boot the server copies the bundled seed database (`server/data/barge-brain.sqlite`) onto the empty volume automatically.
+No volume is needed: the database is read-only and is read from the bundled `server/data/barge-brain.sqlite` once at startup. (`DATABASE_PATH` and `FRONTEND_URL` are still supported if you ever split the frontend out again.)
 
 To regenerate the seed database after a data update:
 
